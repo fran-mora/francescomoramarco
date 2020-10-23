@@ -1,0 +1,111 @@
+.map-title{
+    text-decoration: underline;
+}
+.map-label{
+    font-style: italic;
+    font-family: Apple Chancery Medium;
+    cursor: pointer;
+}
+.map-label:hover{
+    fill:grey;
+}
+
+.f0 {font-size: 0px;}
+.f1 {font-size: 1px;}
+.f2 {font-size: 2px;}
+.f3 {font-size: 3px;}
+.f4 {font-size: 4px;}
+.f5 {font-size: 5px;}
+.f6 {font-size: 6px;}
+.f7 {font-size: 7px;}
+.f8 {font-size: 8px;}
+.f9 {font-size: 9px;}
+.f10 {font-size: 10px;}
+.f11 {font-size: 11px;}
+.f12 {font-size: 12px;}
+.f13 {font-size: 13px;}
+.f14 {font-size: 14px;}
+.f15 {font-size: 15px;}
+.f16 {font-size: 16px;}
+.f17 {font-size: 17px;}
+.f18 {font-size: 18px;}
+.f19 {font-size: 19px;}
+.f20 {font-size: 20px;}
+.f21 {font-size: 21px;}
+.f22 {font-size: 22px;}
+.f23 {font-size: 23px;}
+.f24 {font-size: 24px;}
+.f25 {font-size: 25px;}
+.f26 {font-size: 26px;}
+.f27 {font-size: 27px;}
+.f28 {font-size: 28px;}
+.f29 {font-size: 29px;}
+.f30 {font-size: 30px;}
+.f31 {font-size: 31px;}
+.f32 {font-size: 32px;}
+.f33 {font-size: 33px;}
+.f34 {font-size: 34px;}
+.f35 {font-size: 35px;}
+.f36 {font-size: 36px;}
+.f37 {font-size: 37px;}
+.f38 {font-size: 38px;}
+.f39 {font-size: 39px;}
+.f40 {font-size: 40px;}
+.f41 {font-size: 41px;}
+.f42 {font-size: 42px;}
+.f43 {font-size: 43px;}
+.f44 {font-size: 44px;}
+.f45 {font-size: 45px;}
+.f46 {font-size: 46px;}
+.f47 {font-size: 47px;}
+.f48 {font-size: 48px;}
+.f49 {font-size: 49px;}
+.f50 {font-size: 50px;}
+.underlined {
+    text-decoration: underline;
+}
+
+.sea {
+    background-image: url('/images/sea.jpg');
+    background-size: cover;
+}
+
+.scaling-svg-container {
+ position: relative;
+ height: 0;
+ width: 100%;
+ padding: 0;
+ padding-bottom: 100%;
+ /* override this inline for aspect ratio other than square */
+}
+.scaling-svg {
+ position: absolute;
+ height: 100%;
+ width: 100%;
+ left: 0;
+ top: 0;
+}
+
+#map-div {
+  position: relative;
+  left: 0px;
+  right: 0px;
+  top: 0px;
+  bottom: 0px;
+}
+
+.brown {
+    fill: #8C6226;
+}
+.green {
+    fill: #415A20;
+}
+.darkgrey {
+    fill: rgb(100,100,100);
+}
+.blue {
+    fill: #3E78B4;
+}
+.bold{
+    font-weight: bold;
+}
