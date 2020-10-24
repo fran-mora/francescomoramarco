@@ -105,11 +105,8 @@ h1 {
 .book-cover-reset{
     background-image: url('/images/reset-cover.jpg');
 }
-.book-cover-LaD{
-    background-image: url('/images/Light-and-Darkness-front-sm.jpg');
-}
-.book-cover-medallion-fire{
-    background-image: url('/images/medallion-fire-book-cover.jpg');
+.book-cover-trickster{
+    background-image: url('/images/the-trickster-cover.jpg');
 }
 .home {
     border-radius: 10px;
