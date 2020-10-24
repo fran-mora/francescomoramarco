@@ -44,8 +44,8 @@
     <a href="#" class="w3-bar-item w3-button">Francesco Moramarco</a>
     <!-- Right-sided navbar links. Hide them on small screens -->
     <div class="w3-right w3-hide-medium w3-hide-small">
-        <a href="#about-the-author" class="w3-bar-item w3-button">Me</a>
         <a href="#portfolio" class="w3-bar-item w3-button">Portfolio</a>
+        <a href="#about-the-author" class="w3-bar-item w3-button">Me</a>
         <!-- <a href="#map-of-lothinias" class="w3-bar-item w3-button">Lothinias</a> -->
     </div>
   </div>
@@ -81,8 +81,8 @@
     <div class="w3-container w3-padding-16" id="portfolio">
         <h1>Portfolio</h1>
         <!--<p class="w3-text-grey">Read more about the world and characters of Lothinias.</p>-->
-        <br>
-        <h2>2019</h2>
+        <!-- <br /> -->
+        <!-- <h2>2019</h2> -->
         <br />
         <div class="row">
             <div class="col-6 col-sm-4 col-md-3 col-lg-3 center">
@@ -96,7 +96,15 @@
                 </a>
                 <div class="story-type story-type-novel w3-text-grey">Novel</div>
             </div>
+
+        		<div class="col-6 col-sm-4 col-md-3 col-lg-3 center">
+                <a type="button" data-toggle="modal" data-target="#reset-modal" class="book-cover-a">
+                    <div class="book-cover book-cover-reset"></div>
+                </a>
+                <div class="story-type story-type-anthology w3-text-grey">Anthology</div>
+            </div>
         </div>
+
     </div>
 
 
@@ -104,7 +112,7 @@
 
 <!-- End page content -->
 </div>
-<!-- Modal -->
+<!-- Modal Trickster -->
 <div class="modal fade bd-example-modal-lg" id="the-trickster-modal" tabindex="-1" role="dialog" 	aria-labelledby="the-trickster-modal-title" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable" role="document">
       <div class="modal-content">
@@ -119,6 +127,47 @@
               <div class="w3-row w3-padding-16">
                   <div class="w3-col m5 bof-div">
                       <img src="images/book-cover-sm.jpg" class="w3-round w3-image" alt="The Trickster">
+                  </div>
+                  <div class="w3-col m1 w3-hide-medium">&nbsp;</div>
+                  <div class="w3-col m7 w3-padding-small">
+                      <!--<h5 class="w3-center">Tradition since 1889</h5>-->
+                      <div class="w3-center">
+                          <span class="w3-tag w3-medium w3-light-grey">fantasy</span>
+                          <span class="w3-tag w3-medium w3-light-grey">illusionism</span>
+                          <span class="w3-tag w3-medium w3-light-grey">magic</span>
+                          <span class="w3-tag w3-medium w3-light-grey">love</span>
+                      </div>
+                      <br />
+                      <p class="text-13 justify">
+                          At age 13 and living with his widowed mother, Nero's highest ambitions don't go beyond exploring the
+                          city of Astenora and attracting the attentions of Elva, a young busker and illusionist. Everything
+                          changes when his mother falls very ill, and he has to find the means for purchasing the expensive
+                          medicines that she is dependent on. A natural inclination towards Street Magic earns him both the money
+                          for the medicines and admiration from Elva, but his raising popularity as an illusionist marks him as
+                          an enemy to the powerful mafia of Astenora.
+                      </p>
+                  </div>
+              </div>
+          </div>
+      </div>
+  </div>
+</div>
+
+<!-- Modal Reset -->
+<div class="modal fade bd-example-modal-lg" id="the-reset-modal" tabindex="-1" role="dialog" 	aria-labelledby="the-trickster-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable" role="document">
+      <div class="modal-content">
+          <div class="modal-header">
+              <h5 class="modal-title" id="the-trickster-modal-title">Reset</h5>
+              <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                  <span aria-hidden="true">&times;</span>
+              </button>
+          </div>
+          <div class="modal-body">
+              <!-- Brothers of Fire Section -->
+              <div class="w3-row w3-padding-16">
+                  <div class="w3-col m5 bof-div">
+                      <img src="images/reset-cover.jpg" class="w3-round w3-image" alt="Reset">
                   </div>
                   <div class="w3-col m1 w3-hide-medium">&nbsp;</div>
                   <div class="w3-col m7 w3-padding-small">

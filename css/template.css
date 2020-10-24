@@ -102,6 +102,9 @@ h1 {
 .book-cover-BoF{
     background-image: url('/images/brothers-of-fire-cover-sm.jpg');
 }
+.book-cover-reset{
+    background-image: url('/images/reset-cover.jpg');
+}
 .book-cover-LaD{
     background-image: url('/images/Light-and-Darkness-front-sm.jpg');
 }
@@ -251,7 +254,7 @@ h1 {
 .story-type-novel {
     background-color: #F5B7B1;
 }
-.story-type-short-story {
+.story-type-anthology {
     background-color: #F9E79F;
 }
 .story-type-novella {
