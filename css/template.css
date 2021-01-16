@@ -108,6 +108,9 @@ h1 {
 .book-cover-trickster{
     background-image: url('/images/the-trickster-cover.jpg');
 }
+.book-cover-the-contract{
+    background-image: url('/images/the-contract.jpg');
+}
 .home {
     border-radius: 10px;
     margin: 20px;
