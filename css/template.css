@@ -7,7 +7,10 @@ a {text-decoration: none !important;}
 
 .header {
   letter-spacing:3px !important;
-  background-color: rgb(253, 238, 244);
+  background-color: rgb(253, 244, 238);
+}
+.model-background{
+  background-color: rgb(253, 244, 238);	
 }
 h1,h2,h3,h4,h5,h6{
  letter-spacing:3px !important;
