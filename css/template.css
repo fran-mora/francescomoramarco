@@ -7,7 +7,7 @@ a {text-decoration: none !important;}
 
 .header {
   letter-spacing:3px !important;
-  background-color: #FFFAFA;
+  background-color: "rgb(253, 238, 244)";
 }
 h1,h2,h3,h4,h5,h6{
  letter-spacing:3px !important;
