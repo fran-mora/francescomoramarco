@@ -66,9 +66,28 @@ h1 {
     height: 300px;
     width: 100%;
 }
-
 .book-cover-a {
+    display: block;
+    width: 160px;
+    height: 250px;
+    background-size: cover;
+    border-radius: 5px;
+    cursor: pointer;
+    margin: 0 auto;
+    -webkit-appearance: initial!important;
     color: steelblue;
+
+}
+a[data-target="#the-trickster-modal"] {
+    background-image: url('/images/the-trickster-cover.jpg');
+}
+
+a[data-target="#reset-modal"] {
+    background-image: url('/images/reset-cover.jpg');
+}
+
+a[data-target="#the-contract-modal"] {
+    background-image: url('/images/the-contract.jpg');
 }
 .book-cover {
     width: 160px;
