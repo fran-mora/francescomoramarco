@@ -267,7 +267,8 @@ a[data-target="#the-contract-modal"] {
 }
 .story-type {
     padding:4px;
-    margin:5px;
+    margin-top:5px;
+    margin-bottom:15px;
     border-radius:3px;
 }
 .story-type-novel {
@@ -315,4 +316,7 @@ a[data-target="#the-contract-modal"] {
 
 .hyphened {
   hyphens: auto;	
+}
+.story-type-row{
+    margin:5px;
 }
