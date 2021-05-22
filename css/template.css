@@ -86,6 +86,10 @@ a[data-target="#reset-modal"] {
     background-image: url('/images/reset-cover.jpg');
 }
 
+a[data-target="#at-all-costs-modal"] {
+    background-image: url('/images/at-all-costs-cover.jpg');
+}
+
 a[data-target="#the-contract-modal"] {
     background-image: url('/images/the-contract.jpg');
 }
@@ -123,6 +127,9 @@ a[data-target="#the-contract-modal"] {
 }
 .book-cover-reset{
     background-image: url('/images/reset-cover.jpg');
+}
+.book-cover-at-all-costs {
+    background-image: url('/images/at-all-costs-cover.jpg');
 }
 .book-cover-trickster{
     background-image: url('/images/the-trickster-cover.jpg');
