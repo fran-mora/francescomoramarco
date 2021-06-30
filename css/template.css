@@ -332,3 +332,7 @@ a[data-target="#the-contract-modal"] {
 .story-type-row{
     margin:5px;
 }
+
+.map-image{
+  border-radius: 5px;
+}
