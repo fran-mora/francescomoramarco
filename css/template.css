@@ -98,6 +98,10 @@ a[data-target="#the-contract-modal"] {
     background-image: url('/images/the-contract.jpg');
     background-position: center;
 }
+a[data-target="#six-strangers-modal"] {
+    background-image: url('/images/elephant.jpg');
+    background-position: center;
+}
 .book-cover {
     width: 160px;
     height: 250px;
