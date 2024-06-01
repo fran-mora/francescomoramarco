@@ -78,30 +78,31 @@ h1 {
     color: steelblue;
 
 }
-a[data-target="#the-trickster-modal"] {
+a[data-story="the-trickster"] {
     background-image: url('/images/the-trickster-cover.jpg');
     background-position: center;
-
 }
 
-a[data-target="#reset-modal"] {
+a[data-story="reset"] {
     background-image: url('/images/reset-cover.jpg');
     background-position: center;
 }
 
-a[data-target="#at-all-costs-modal"] {
+a[data-story="at-all-costs"] {
     background-image: url('/images/at-all-costs-cover.jpg');
     background-position: center;
 }
 
-a[data-target="#the-contract-modal"] {
+a[data-story="the-contract"] {
     background-image: url('/images/the-contract.jpg');
     background-position: center;
 }
-a[data-target="#six-strangers-modal"] {
+
+a[data-story="six-strangers"] {
     background-image: url('/images/elephant.jpg');
     background-position: center;
 }
+
 .book-cover {
     width: 160px;
     height: 250px;
