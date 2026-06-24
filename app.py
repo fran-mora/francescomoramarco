@@ -10,6 +10,11 @@ def index():
     return send_from_directory('.', 'index.html')
 
 
+@app.route("/writing")
+def writing():
+    return send_from_directory('.', 'writing.html')
+
+
 @app.route('/<path:path>')
 def send_static(path):
     return send_from_directory('.', path)
