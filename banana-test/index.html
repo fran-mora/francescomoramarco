@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>The Banana Test 🍌 — a visual benchmark for AI models</title>
+    <meta name="description" content="One prompt, many models: animate the full life cycle of a banana plant in three.js — corm, leaves, flower, fruit, decay, pups. A visual leaderboard.">
+    <meta name="author" content="Francesco Moramarco">
+    <meta property="og:url" content="https://francescomoramarco.com/banana-test/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="The Banana Test 🍌" />
+    <meta property="og:description" content="One prompt, many models: animate the full life cycle of a banana plant in three.js. A visual leaderboard." />
+    <link rel="shortcut icon" type="image/png" href="/images/medallion-fire-favicon.png"/>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..600&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root{
+            --paper:#F4EDE1;
+            --ink:#26201B;
+            --ink-soft:#5C5046;
+            --wine:#7A2A3A;
+            --rose:#C97A63;
+            --leaf:#7E8B53;
+            --banana:#D9A422;
+            --banana-deep:#A87A10;
+            --muted:#9A8B7B;
+            --line:rgba(38,32,27,.13);
+            --shadow:rgba(60,25,30,.16);
+        }
+        *{box-sizing:border-box;margin:0;padding:0;}
+        html{scroll-behavior:smooth;}
+        body{
+            font-family:'Hanken Grotesk',system-ui,sans-serif;
+            background:var(--paper);
+            color:var(--ink);
+            line-height:1.6;
+            -webkit-font-smoothing:antialiased;
+            overflow-x:hidden;
+        }
+        body::before{
+            content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+            background:
+                radial-gradient(58% 48% at 84% 6%, rgba(217,164,34,.16), transparent 70%),
+                radial-gradient(52% 42% at 4% 98%, rgba(126,139,83,.16), transparent 72%);
+        }
+        .wrap{position:relative;z-index:1;max-width:1040px;margin:0 auto;padding:0 28px;}
+
+        nav{display:flex;align-items:center;justify-content:space-between;padding:32px 0 8px;}
+        .brand{font-family:'Fraunces',serif;font-weight:500;font-size:1.05rem;color:var(--ink);text-decoration:none;}
+        .navlinks a{font-size:.95rem;color:var(--ink-soft);text-decoration:none;padding-bottom:3px;border-bottom:1.5px solid transparent;transition:color .25s,border-color .25s;}
+        .navlinks a:hover{color:var(--wine);border-color:var(--wine);}
+
+        header.hero{padding:38px 0 6px;max-width:760px;}
+        .kicker{font-family:'Fraunces',serif;font-style:italic;font-size:1.05rem;color:var(--banana-deep);margin-bottom:12px;}
+        h1{
+            font-family:'Fraunces',serif;font-weight:400;
+            font-size:clamp(2.2rem,5vw,3.4rem);line-height:1.05;letter-spacing:-.015em;
+            margin-bottom:16px;
+        }
+        h1 em{font-style:italic;color:var(--wine);}
+        .lede{font-size:1.1rem;color:var(--ink-soft);}
+        .lede b{color:var(--ink);font-weight:600;}
+
+        /* prompt box */
+        details.prompt{
+            margin:26px 0 6px;border:1px solid var(--line);border-radius:10px;
+            background:#fff7ec;box-shadow:0 14px 30px -24px var(--shadow);
+            max-width:820px;
+        }
+        details.prompt summary{
+            cursor:pointer;list-style:none;padding:14px 20px;
+            font-family:'Fraunces',serif;font-size:1.05rem;color:var(--ink);
+            display:flex;align-items:center;gap:10px;
+        }
+        details.prompt summary::-webkit-details-marker{display:none;}
+        details.prompt summary::after{content:"+";margin-left:auto;font-size:1.3rem;color:var(--muted);transition:transform .3s;}
+        details.prompt[open] summary::after{transform:rotate(45deg);}
+        details.prompt pre{
+            margin:0;padding:4px 20px 18px;white-space:pre-wrap;
+            font-size:.9rem;line-height:1.55;color:var(--ink-soft);
+            font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+        }
+
+        .rules{font-size:.92rem;color:var(--muted);margin:12px 0 0;max-width:820px;}
+
+        /* leaderboard — full-width grid so several run side by side */
+        .board-wrap{
+            position:relative;z-index:1;
+            width:min(1840px, 100%);margin:0 auto;padding:0 24px;
+        }
+        section.board{margin:38px 0 30px;border-top:1px solid var(--line);padding-top:28px;}
+        .board-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;margin-bottom:20px;}
+        .board .eyebrow{font-family:'Fraunces',serif;font-style:italic;font-size:1.3rem;}
+        .board .hint{font-size:.92rem;color:var(--muted);}
+        #entries{
+            display:grid;gap:22px;
+            grid-template-columns:repeat(2, 1fr);
+            max-width:1500px;margin:0 auto;
+        }
+        @media (max-width:760px){
+            #entries{grid-template-columns:1fr;}
+        }
+
+        .card{
+            border:1px solid var(--line);border-radius:10px;background:#fffdf7;
+            box-shadow:0 18px 36px -28px var(--shadow);overflow:hidden;
+            display:flex;flex-direction:column;
+        }
+        .card-head{display:flex;align-items:baseline;gap:8px;padding:10px 14px 6px;}
+        .rank{font-family:'Fraunces',serif;font-size:1.05rem;color:var(--banana-deep);}
+        .model{font-family:'Fraunces',serif;font-size:1.02rem;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .score{
+            margin-left:auto;font-family:'Fraunces',serif;font-size:.82rem;color:var(--wine);
+            background:rgba(122,42,58,.07);border:1px solid rgba(122,42,58,.18);
+            padding:0 9px;border-radius:20px;white-space:nowrap;
+        }
+        .viewer{position:relative;aspect-ratio:4/3;background:#1d1a16;}
+        .viewer iframe{position:absolute;inset:0;width:100%;height:100%;border:0;}
+        /* text-panel entry: a statement instead of a running animation.
+           keeps the same 4/3 tile size as the animations; text centred inside. */
+        .card.wide{grid-column:1 / -1;}
+        .card.text .viewer{display:flex;align-items:center;justify-content:center;}
+        .text-panel{
+            color:#F4EDE1;font-family:'Fraunces',serif;font-weight:300;
+            font-size:1.05rem;line-height:1.6;text-align:center;
+            max-width:44ch;padding:24px 28px;white-space:pre-wrap;
+            max-height:100%;overflow:auto;
+        }
+        .card-bar{
+            display:flex;gap:12px;align-items:baseline;padding:7px 14px 9px;font-size:.8rem;
+        }
+        .lab{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .card-bar .actions{margin-left:auto;display:flex;gap:12px;flex:none;}
+        .card-bar button,.card-bar a{
+            font:inherit;color:var(--ink-soft);background:none;border:none;cursor:pointer;
+            text-decoration:none;border-bottom:1px solid var(--line);padding:0 0 1px;
+            transition:color .25s,border-color .25s;white-space:nowrap;
+        }
+        .card-bar button:hover,.card-bar a:hover{color:var(--wine);border-color:var(--wine);}
+        .verdict{padding:0 14px 10px;color:var(--ink-soft);font-size:.85rem;line-height:1.45;}
+        .verdict i{color:var(--muted);}
+
+        /* featured (human-in-the-loop) card: one wide cinematic tile */
+        #featured .card{max-width:1100px;margin:0 auto;}
+        #featured .viewer{aspect-ratio:16/9;}
+        #featured .model{font-size:1.15rem;}
+
+        .empty{
+            border:1.5px dashed var(--line);border-radius:12px;padding:40px 30px;
+            text-align:center;color:var(--muted);font-size:1.05rem;grid-column:1/-1;
+        }
+
+        footer{padding:20px 0 56px;display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:baseline;}
+        footer .sig{font-family:'Fraunces',serif;font-style:italic;font-size:1.15rem;}
+        footer .colophon{font-family:'Fraunces',serif;font-style:italic;font-size:.92rem;color:var(--muted);}
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <nav>
+        <a class="brand" href="/">Francesco Moramarco</a>
+        <div class="navlinks">
+            <a href="/">home</a>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <div class="kicker">a tiny benchmark, grown at home 🍌</div>
+        <h1>The <em>Banana Test</em></h1>
+        <p class="lede">
+            One prompt, several AI coding agents. Each agent gets the same system prompt and must
+            write a single <b>three.js</b> page animating the full life of a banana plant —
+            <b>corm → leaves → flower → fruit → decay → pups</b>.
+            One shot, no hand-holding. All entries run live below, side by side.
+        </p>
+    </header>
+
+    <details class="prompt">
+        <summary>🍌 The exact prompt every agent receives</summary>
+        <pre id="prompt-text">Your goal is to generate a single self-contained HTML file containing a visual Three.js animation of a Cavendish banana plant growing, fruiting, declining, and being replaced by its pups. The animation should show a biologically plausible banana lifecycle. The plant should begin as a small corm or pup emerging from the soil. It should grow a pseudostem, unfurl broad banana leaves, develop a hanging inflorescence, open its reddish-purple bracts, form hands of bananas from the female flowers, continue into the male flower/banana-heart stage, ripen the bananas, and then show the mother plant gradually declining after fruiting. As the mother plant matures and declines, new pups should emerge from the base. Those pups should begin their own growth cycle so that the scene can loop continuously. Make the result as visually realistic and impressive as possible within a single HTML file. Think carefully about the appearance of a Cavendish banana plant: the thick layered pseudostem, large curved leaves with varied size and age, young leaves with reddish or dark mottled markings that fade as they mature, older leaves that yellow, tear, droop, and decay, the heavy curved banana bunch, the reddish-purple flower bracts, and the changing colours of ripening bananas. Pay attention to the physical presence of the plant. Leaves, pseudostems, flowers, and fruit should be arranged in a plausible 3D structure and should avoid obvious intersections. The plant should feel like a real growing organism with mass, curvature, gravity, asymmetry, and age variation, rather than a flat or symbolic diagram. The animation should be staged clearly enough that a viewer can understand the lifecycle without reading code. You may include helpful visual elements such as a camera orbit, timeline, labels, restart button, speed control, or subtle environmental details like soil, light, shadows, and background, but the main focus should remain the banana plant lifecycle. Take as much time and as many tokens as you need. Plan the animation, build it, verify it, then improve it, and repeat verifying and improving it until you get diminishing returns.
+Technical requirements:
+* Output a single complete HTML file.
+* Use Three.js.
+* No build step.
+* All custom JavaScript and CSS should be included in the file.
+* External dependencies are allowed only for standard browser-loadable libraries such as Three.js from a CDN.
+* Do not rely on external image, video, 3D model, or texture assets.
+* The file should run directly in a modern browser.
+* Prioritise visual quality, biological plausibility, smooth animation, and robustness. Use your full available effort to design and implement the most realistic and beautiful Cavendish banana plant lifecycle animation you can.
+* The user can drag to change camera angle
+* The only visible widget is a speed dial</pre>
+    </details>
+    <p class="rules">
+        Rules: one shot per agent, output must be a single self-contained HTML file.
+        The agent's code is never edited; tiles only get a small display-only style patch
+        to shrink each agent's own on-screen widgets so the plants stay visible.
+        "open ↗" shows the untouched original. Every tile is live —
+        if your machine struggles, close the tab and open them one at a time.
+    </p>
+
+</div>
+
+<div class="board-wrap">
+    <section class="board">
+        <div class="board-head">
+            <p class="eyebrow">The agents —</p>
+            <p class="hint">Each one is a coding agent given the same prompt once, with tools but no human in the loop — the Claude models running in Claude Code, GPT-5.5 in Codex. All run live.</p>
+        </div>
+        <div id="entries"></div>
+    </section>
+
+    <section class="board" id="featured-section" hidden>
+        <div class="board-head">
+            <p class="eyebrow">The ceiling — human in the loop 🧑‍🌾</p>
+            <p class="hint">Not one of the one-shot runs above: a person guiding a coding agent over many turns, across days. This is roughly as good as it gets when you add a human to the loop.</p>
+        </div>
+        <div id="featured"></div>
+    </section>
+</div>
+
+<div class="wrap">
+    <footer>
+        <span class="sig">— Francesco</span>
+        <span class="colophon">no bananas were harmed</span>
+    </footer>
+</div>
+
+<script src="entries.js"></script>
+<script>
+(function(){
+    const container = document.getElementById('entries');
+    const featuredBox = document.getElementById('featured');
+    // display order = manifest order (curated by hand)
+    const all = (window.BANANA_ENTRIES || []).filter(e => !e.placeholder);
+    const featured = all.filter(e => e.featured);
+    const entries = all.filter(e => !e.featured);
+
+    if (featured.length) document.getElementById('featured-section').hidden = false;
+
+    if (!entries.length) {
+        container.innerHTML = '<div class="empty">No entries yet — the bananas are still ripening.</div>';
+        return;
+    }
+
+    featured.concat(entries).forEach((e) => {
+        const isFeatured = !!e.featured;
+        const isText = !!e.textBody;   // shows a statement instead of an animation
+        const card = document.createElement('article');
+        card.className = 'card' + (isText ? ' text' : '') + (e.wide ? ' wide' : '');
+        const actions = isText ? '' : `
+                <span class="actions">
+                    <button type="button" class="restart">restart ↻</button>
+                    <a href="entries/${e.file}" target="_blank" rel="noopener">open ↗</a>
+                </span>`;
+        card.innerHTML = `
+            <div class="card-head">
+                ${isFeatured ? '<span class="rank">🧑‍🌾</span>' : ''}
+                <span class="model" title="${e.model}">${e.model}</span>
+                ${isFeatured ? '<span class="score">hors concours</span>' : ''}
+            </div>
+            <div class="viewer">${isText ? '<div class="text-panel"></div>' : ''}</div>
+            <div class="card-bar">
+                <span class="lab">${[e.lab, e.date].filter(Boolean).join(' · ')}</span>${actions}
+            </div>
+            ${e.verdict ? `<p class="verdict">${e.verdict}${e.notes ? ` <i>— ${e.notes}</i>` : ''}</p>` : ''}`;
+
+        if (isText) {
+            // textContent, not innerHTML — no escaping needed, newlines kept via pre-wrap
+            card.querySelector('.text-panel').textContent = e.textBody;
+        } else {
+            const viewer = card.querySelector('.viewer');
+            function load() {
+                viewer.innerHTML = '';
+                const iframe = document.createElement('iframe');
+                iframe.src = 'entries/' + e.file;
+                // same-origin so we can inject the display-only tile CSS below;
+                // entries are our own curated static files
+                iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+                iframe.title = e.model + ' — banana test entry';
+                if (e.tileCss || e.tileJs) {
+                    iframe.addEventListener('load', () => {
+                        try {
+                            const doc = iframe.contentDocument;
+                            if (e.tileCss) {
+                                const style = doc.createElement('style');
+                                style.textContent = e.tileCss;
+                                (doc.head || doc.documentElement).appendChild(style);
+                            }
+                            if (e.tileJs) {
+                                const script = doc.createElement('script');
+                                script.textContent = e.tileJs;
+                                (doc.body || doc.documentElement).appendChild(script);
+                            }
+                        } catch (err) { /* cross-origin or not loaded — leave as-is */ }
+                    });
+                }
+                viewer.appendChild(iframe);
+            }
+            card.querySelector('.restart').addEventListener('click', load);
+            load();   // autoplay: every entry runs on page load
+        }
+
+        (isFeatured ? featuredBox : container).appendChild(card);
+    });
+})();
+</script>
+
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-NXTGBCM2D5"></script>
+<script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-NXTGBCM2D5');
+</script>
+</body>
+</html>

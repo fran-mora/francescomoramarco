@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cavendish Banana Plant Lifecycle</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #0a1410; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  #app-canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; cursor: grab; }
+  #app-canvas:active { cursor: grabbing; }
+
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 50% 40%, #1c2f22 0%, #0a1410 70%);
+    color: #cfe8cf; font-size: 15px; letter-spacing: 0.08em; z-index: 50;
+    transition: opacity 0.6s ease;
+  }
+  #loading .spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(200,230,200,0.15); border-top-color: #7bc47f;
+    animation: spin 0.9s linear infinite; margin-right: 14px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- Speed dial widget (the only visible widget) ---------- */
+  #speed-dial {
+    position: fixed; right: 22px; bottom: 22px; width: 108px; height: 108px;
+    z-index: 20; user-select: none; touch-action: none;
+    filter: drop-shadow(0 6px 18px rgba(0,0,0,0.45));
+  }
+  #speed-dial svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  #speed-dial .dial-bg {
+    fill: rgba(14, 22, 16, 0.62);
+    stroke: rgba(255,255,255,0.08);
+    stroke-width: 1;
+  }
+  #speed-dial .dial-track { fill: none; stroke: rgba(255,255,255,0.13); stroke-width: 6; stroke-linecap: round; }
+  #speed-dial .dial-fill { fill: none; stroke: #8fd18a; stroke-width: 6; stroke-linecap: round; filter: drop-shadow(0 0 4px rgba(143,209,138,0.6)); }
+  #speed-dial .dial-tick { stroke: rgba(255,255,255,0.25); stroke-width: 1.4; }
+  #speed-dial .dial-knob-wrap { cursor: grab; }
+  #speed-dial .dial-knob-wrap:active { cursor: grabbing; }
+  #speed-dial .dial-knob {
+    fill: #eafbe6; stroke: #4c7a4a; stroke-width: 1.5;
+  }
+  #speed-dial .dial-center {
+    fill: rgba(255,255,255,0.03); stroke: none; cursor: pointer;
+  }
+  #speed-dial .dial-center:hover { fill: rgba(255,255,255,0.08); }
+  #speed-dial text {
+    fill: #eafbe6; font-family: 'Segoe UI', Roboto, sans-serif; text-anchor: middle;
+    dominant-baseline: middle; pointer-events: none; user-select: none;
+  }
+  #speed-dial .dial-value { font-size: 17px; font-weight: 600; }
+  #speed-dial .dial-label { font-size: 8px; letter-spacing: 0.14em; fill: rgba(234,251,230,0.55); }
+  #speed-dial.paused .dial-value { fill: #e8a24a; }
+  #speed-dial.paused .dial-fill { stroke: #e8a24a; }
+</style>
+</head>
+<body>
+
+<div id="loading"><div class="spinner"></div>Growing scene&hellip;</div>
+
+<canvas id="app-canvas"></canvas>
+
+<div id="speed-dial" title="Drag to change speed. Click center to pause.">
+  <svg viewBox="0 0 108 108">
+    <circle class="dial-bg" cx="54" cy="54" r="50"></circle>
+    <path class="dial-track" d=""></path>
+    <path class="dial-fill" d=""></path>
+    <g class="dial-ticks"></g>
+    <g class="dial-knob-wrap">
+      <circle class="dial-knob" cx="54" cy="14" r="6"></circle>
+    </g>
+    <circle class="dial-center" cx="54" cy="54" r="20"></circle>
+    <text class="dial-value" x="54" y="50">1.0&times;</text>
+    <text class="dial-label" x="54" y="66">SPEED</text>
+  </svg>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* =========================================================================
+   BASIC PIPELINE (phase A): renderer, camera, controls, lights, ground,
+   speed dial, animation loop with a placeholder plant. Full procedural
+   banana geometry will replace the placeholder in later phases.
+   ========================================================================= */
+
+const canvas = document.getElementById('app-canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.05, 200);
+camera.position.set(4.9, 3.1, 5.6);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.75, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.minDistance = 1.8;
+controls.maxDistance = 18;
+controls.minPolarAngle = 0.15;
+controls.maxPolarAngle = Math.PI * 0.52;
+controls.update();
+
+// ---- Lighting ----
+const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x4a3d28, 0.95);
+scene.add(hemi);
+
+const ambientFloor = new THREE.AmbientLight(0xdcead2, 0.32);
+scene.add(ambientFloor);
+
+const sun = new THREE.DirectionalLight(0xfff2d6, 1.7);
+sun.position.set(6, 9, 4);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -8;
+sun.shadow.camera.right = 8;
+sun.shadow.camera.top = 8;
+sun.shadow.camera.bottom = -8;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 30;
+sun.shadow.bias = -0.0015;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0xcfe8ff, 0.6);
+fill.position.set(-6, 4, -5);
+scene.add(fill);
+
+const rim = new THREE.DirectionalLight(0xd9ffe0, 0.35);
+rim.position.set(-2, 5, -7);
+scene.add(rim);
+
+// ---- Sky background ----
+function makeSkyTexture() {
+  const c = document.createElement('canvas');
+  c.width = 2; c.height = 256;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#4f86c6');
+  grad.addColorStop(0.45, '#a9cbdb');
+  grad.addColorStop(0.75, '#dce9d2');
+  grad.addColorStop(1, '#e8e2c8');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = makeSkyTexture();
+scene.fog = new THREE.FogExp2(0xcfe0c8, 0.028);
+
+// ---- Ground ----
+function makeSoilTexture() {
+  const size = 512;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#4a3524';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 9000; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = Math.random() * 1.6 + 0.3;
+    const shade = Math.random();
+    ctx.fillStyle = shade < 0.5
+      ? `rgba(${30 + shade * 40},${20 + shade * 30},${12 + shade * 15},${0.25 + Math.random() * 0.3})`
+      : `rgba(${90 + shade * 40},${65 + shade * 30},${40 + shade * 15},${0.15 + Math.random() * 0.25})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 6);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const groundGeo = new THREE.CircleGeometry(30, 64);
+const groundMat = new THREE.MeshStandardMaterial({ map: makeSoilTexture(), roughness: 1.0, metalness: 0.0 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* =========================================================================
+   MATH / RNG UTILITIES
+   ========================================================================= */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function smoothstep(a, b, x) { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }
+function easeOutCubic(x) { return 1 - Math.pow(1 - x, 3); }
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+const CYCLE_T = 130; // seconds for one full lifecycle at 1x speed
+
+/* =========================================================================
+   PROCEDURAL PSEUDOSTEM (layered banana "false trunk")
+   ========================================================================= */
+function pseudoHeight(t) {
+  const grow = smoothstep(0.0, 0.40, t);
+  let h = 0.12 + grow * 2.55;
+  h += smoothstep(0.46, 0.60, t) * 0.15;
+  h -= smoothstep(0.90, 1.0, t) * 0.22;
+  return Math.max(0.08, h);
+}
+function pseudoRadius(t) {
+  const grow = smoothstep(0.0, 0.35, t);
+  let r = 0.05 + grow * 0.30;
+  r -= smoothstep(0.92, 1.0, t) * 0.05;
+  return Math.max(0.035, r);
+}
+
+const PSEUDO_BASE_COL = new THREE.Color(0x4f7a3a);
+const PSEUDO_DARK_COL = new THREE.Color(0x2c4d24);
+const PSEUDO_DRY_COL = new THREE.Color(0x8a6a3d);
+const PSEUDO_YOUNG_COL = new THREE.Color(0x9bdc72);
+
+function buildPseudostemGeometry(p) {
+  const { height, baseRadius, radialSegments, heightSegments, streaks, youngness, declineBrown } = p;
+  const positions = [], colors = [], uvs = [], indices = [];
+
+  function radiusAt(v) {
+    const bulge = 1 + 0.11 * Math.sin(Math.min(v, 1) * Math.PI * 0.85);
+    const taper = 1 - 0.44 * Math.pow(v, 1.35);
+    return baseRadius * bulge * taper;
+  }
+
+  for (let hy = 0; hy <= heightSegments; hy++) {
+    const v = hy / heightSegments;
+    const y = v * height;
+    const r = radiusAt(v);
+    for (let rx = 0; rx <= radialSegments; rx++) {
+      const u = rx / radialSegments;
+      const theta = u * Math.PI * 2;
+      const streak = streaks[rx % radialSegments];
+      const rr = r * (1 + (streak - 0.5) * 0.06);
+      positions.push(Math.cos(theta) * rr, y, Math.sin(theta) * rr);
+      uvs.push(u, v);
+      let c = PSEUDO_BASE_COL.clone().lerp(PSEUDO_DARK_COL, streak * 0.55);
+      c.lerp(PSEUDO_YOUNG_COL, youngness * 0.6);
+      const baseFade = Math.max(0, 1 - v * 3.2);
+      c.lerp(PSEUDO_DRY_COL, baseFade * (0.32 + declineBrown * 0.5));
+      c.lerp(PSEUDO_DRY_COL, declineBrown * 0.35 * (1 - v * 0.4));
+      colors.push(c.r, c.g, c.b);
+    }
+  }
+  const cols = radialSegments + 1;
+  for (let hy = 0; hy < heightSegments; hy++) {
+    for (let rx = 0; rx < radialSegments; rx++) {
+      const a = hy * cols + rx, b = a + 1, c = a + cols, d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setIndex(indices);
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/* =========================================================================
+   PROCEDURAL LEAF (curved ribbon spine + unfurl morph + age coloring)
+   ========================================================================= */
+const LEN_SEG = 15, WID_SEG = 12;
+
+function leafTearFactor(u, v, leafAge, seed) {
+  const sev = smoothstep(0.66, 1.05, leafAge);
+  if (sev <= 0) return 0;
+  const edgeMask = smoothstep(0.40, 0.92, Math.abs(v));
+  if (edgeMask <= 0) return 0;
+  const n1 = Math.sin(u * 23.0 + seed * 3.1) * 0.5 + 0.5;
+  const n2 = Math.sin(u * 57.0 - seed * 1.7 + Math.abs(v) * 4.0) * 0.5 + 0.5;
+  const jag = Math.pow(n1 * 0.6 + n2 * 0.4, 2.0);
+  return clamp01(jag * edgeMask * sev * 1.4);
+}
+const LEAF_MAX_LEN = 1.55;
+const MOTTLE_COLOR = new THREE.Color(0x5a2a22);
+
+function leafDroop(leafAge) {
+  const grow = clamp01(Math.max(leafAge, 0) / 0.12);
+  const growDroop = 0.15 + grow * 0.55;
+  const ageDroop = Math.min(Math.max(0, leafAge - 0.12) / 0.88, 1.3);
+  return growDroop + ageDroop * 1.55;
+}
+
+function buildLeafFrame(azimuth, droopAmount, baseTilt, nSeg, twistAmt) {
+  const dir0 = new THREE.Vector3(Math.cos(azimuth), 0, Math.sin(azimuth));
+  const side0 = new THREE.Vector3().crossVectors(dir0, WORLD_UP).normalize();
+  const spine = [new THREE.Vector3(0, 0, 0)];
+  const tangents = [], ups = [], sides = [];
+  const stepLen = 1 / nSeg;
+  for (let i = 0; i <= nSeg; i++) {
+    const u = i / nSeg;
+    const theta = baseTilt + droopAmount * Math.pow(u, 1.4);
+    const tangent = new THREE.Vector3()
+      .addScaledVector(WORLD_UP, Math.cos(theta))
+      .addScaledVector(dir0, Math.sin(theta)).normalize();
+    let up2 = new THREE.Vector3().crossVectors(side0, tangent).normalize();
+    let side = side0.clone();
+    if (twistAmt) {
+      const tw = twistAmt * u;
+      side.applyAxisAngle(tangent, tw);
+      up2.applyAxisAngle(tangent, tw);
+    }
+    tangents.push(tangent); ups.push(up2); sides.push(side);
+    if (i > 0) spine.push(spine[i - 1].clone().addScaledVector(tangents[i - 1], stepLen));
+  }
+  return { spine, tangents, ups, sides };
+}
+
+function leafWidthShape(u) {
+  const uu = clamp01(u);
+  const riseIn = smoothstep(0.0, 0.14, uu);
+  const fallOut = 1 - smoothstep(0.60, 0.97, uu);
+  let w = riseIn * fallOut;
+  const tipZone = smoothstep(0.82, 1.0, uu);
+  const tipPoint = Math.pow(Math.max(0, 1 - uu), 0.45);
+  w = lerp(w, w * tipPoint * 1.35, tipZone);
+  return Math.max(0, w);
+}
+
+function mottleNoise(u, v, seed) {
+  const a = Math.sin(u * 7.3 + seed * 0.71) * Math.cos(v * 5.1 + seed * 1.33);
+  const b = Math.sin(u * 13.1 - seed * 0.41 + v * 9.7);
+  let n = a * 0.6 + b * 0.4;
+  n = n * 0.5 + 0.5;
+  return Math.pow(clamp01(n), 2.5);
+}
+
+function leafBaseColor(age) {
+  const cYoung = new THREE.Color(0x9fd97a);
+  const cMature = new THREE.Color(0x2f6b2b);
+  const cOld = new THREE.Color(0x7a8a3a);
+  const cDry = new THREE.Color(0x8a6a3d);
+  const cDead = new THREE.Color(0x4c3a22);
+  if (age < 0.08) return cYoung.clone().lerp(cMature, age / 0.08);
+  if (age < 0.55) return cMature.clone();
+  if (age < 0.75) return cMature.clone().lerp(cOld, (age - 0.55) / 0.2);
+  if (age < 0.92) return cOld.clone().lerp(cDry, (age - 0.75) / 0.17);
+  return cDry.clone().lerp(cDead, Math.min(1, (age - 0.92) / 0.23));
+}
+
+function leafColorAt(u, v, leafAge, mottleSeed) {
+  const edge = Math.pow(Math.abs(v), 2.2);
+  const tipBias = Math.pow(Math.max(0, u), 3.0);
+  const bias = Math.max(edge, tipBias * 0.8) * smoothstep(0.35, 1.0, Math.min(leafAge, 1)) * 0.6;
+  const localAge = Math.min(1.15, Math.max(0, leafAge) + bias);
+  const c = leafBaseColor(localAge);
+  const mEnv = smoothstep(0, 0.04, leafAge) * (1 - smoothstep(0.04, 0.20, leafAge));
+  if (mEnv > 0.001) {
+    const n = mottleNoise(u, v, mottleSeed);
+    c.lerp(MOTTLE_COLOR, n * mEnv * 0.55);
+  }
+  return c;
+}
+
+function buildLeafGeometry(st) {
+  const frame = buildLeafFrame(st.azimuth, st.droopAmt, st.baseTilt, LEN_SEG, st.twist);
+  const positions = [], uvs = [], colors = [], indices = [];
+  const maxHalfWidth = 0.225 * st.widthMult;
+  const rollAmt = 2.35;
+
+  for (let i = 0; i <= LEN_SEG; i++) {
+    const u = i / LEN_SEG;
+    const spinePt = frame.spine[i];
+    const side = frame.sides[i];
+    const up2 = frame.ups[i];
+    const wShape = leafWidthShape(u);
+    const hw = wShape * maxHalfWidth;
+    const rollR = wShape * maxHalfWidth * 0.62 + 0.004;
+    const edgeDroop = lerp(-0.035, 0.30, smoothstep(0, 1, st.leafAge)) * (0.4 + 0.6 * u);
+    for (let j = 0; j <= WID_SEG; j++) {
+      const v = (j / WID_SEG) * 2 - 1;
+      const tearAmt = leafTearFactor(u, v, st.leafAge, st.mottleSeed);
+      const hwTorn = hw * (1 - tearAmt);
+      const trough = edgeDroop * v * v + Math.max(0, 1 - Math.abs(v) * 7) * 0.028;
+      const flat = new THREE.Vector3().addScaledVector(side, hwTorn * v).addScaledVector(up2, trough - tearAmt * 0.05);
+      const angle = v * rollAmt;
+      const rolled = new THREE.Vector3()
+        .addScaledVector(side, Math.sin(angle) * rollR)
+        .addScaledVector(up2, (Math.cos(angle) - 1) * rollR);
+      const local = rolled.lerp(flat, st.unfurlT);
+      const p = spinePt.clone().add(local).multiplyScalar(st.scale);
+      positions.push(p.x, p.y, p.z);
+      uvs.push((v + 1) / 2, u);
+      const c = leafColorAt(u, v, st.leafAge, st.mottleSeed);
+      colors.push(c.r, c.g, c.b);
+    }
+  }
+  const cols = WID_SEG + 1;
+  for (let i = 0; i < LEN_SEG; i++) {
+    for (let j = 0; j < WID_SEG; j++) {
+      const a = i * cols + j, b = a + 1, c = a + cols, d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setIndex(indices);
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/* =========================================================================
+   GENERIC TUBE BUILDER (peduncle + banana fingers share this)
+   ========================================================================= */
+function buildTubeMesh(points, radiusFn, radialSegments, colorFn) {
+  const n = points.length;
+  const positions = [], colors = [], uvs = [], indices = [];
+  let prevNormal = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const tangent = (i < n - 1 ? points[i + 1].clone().sub(p) : p.clone().sub(points[i - 1]));
+    if (tangent.lengthSq() < 1e-10) tangent.set(0, 1, 0); else tangent.normalize();
+    let normal = prevNormal.clone().sub(tangent.clone().multiplyScalar(prevNormal.dot(tangent)));
+    if (normal.lengthSq() < 1e-8) {
+      const alt = Math.abs(tangent.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+      normal = alt.clone().sub(tangent.clone().multiplyScalar(alt.dot(tangent)));
+    }
+    normal.normalize();
+    const binormal = new THREE.Vector3().crossVectors(tangent, normal).normalize();
+    prevNormal = normal;
+    const v = n > 1 ? i / (n - 1) : 0;
+    const r = radiusFn(v);
+    const col = colorFn(v);
+    for (let j = 0; j <= radialSegments; j++) {
+      const a = (j / radialSegments) * Math.PI * 2;
+      const off = normal.clone().multiplyScalar(Math.cos(a) * r).add(binormal.clone().multiplyScalar(Math.sin(a) * r));
+      const pos = p.clone().add(off);
+      positions.push(pos.x, pos.y, pos.z);
+      uvs.push(j / radialSegments, v);
+      colors.push(col.r, col.g, col.b);
+    }
+  }
+  const cols = radialSegments + 1;
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < radialSegments; j++) {
+      const a = i * cols + j, b = a + 1, c = a + cols, d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setIndex(indices);
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/* =========================================================================
+   INFLORESCENCE: bract shape, banana finger shape (instanced), colors
+   ========================================================================= */
+function buildBractGeometry() {
+  const LEN = 9, WID = 6;
+  const positions = [], uvs = [], colors = [], indices = [];
+  for (let i = 0; i <= LEN; i++) {
+    const u = i / LEN;
+    const hw = 0.5 * Math.sin(Math.PI * Math.pow(u, 0.72)) * (1 - 0.10 * u) + 0.015;
+    for (let j = 0; j <= WID; j++) {
+      const v = (j / WID) * 2 - 1;
+      const cup = (1 - Math.cos(v * Math.PI * 0.42)) * 0.22 * (1 - u * 0.35);
+      positions.push(hw * v, u, -cup);
+      uvs.push((v + 1) / 2, u);
+      colors.push(1, 1, 1);
+    }
+  }
+  const cols = WID + 1;
+  for (let i = 0; i < LEN; i++) {
+    for (let j = 0; j < WID; j++) {
+      const a = i * cols + j, b = a + 1, c = a + cols, d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setIndex(indices);
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+const BRACT_GEO = buildBractGeometry();
+
+function buildFingerGeometry() {
+  const N = 14;
+  const pts = [];
+  let cur = new THREE.Vector3(0, 0, 0);
+  const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i <= N; i++) {
+    const u = i / N;
+    const e = smoothstep(0, 1, u);
+    const theta = lerp(-0.30, 1.30, e);
+    const tangent = X.clone().multiplyScalar(Math.cos(theta)).add(Y.clone().multiplyScalar(Math.sin(theta)));
+    if (i > 0) cur = cur.clone().addScaledVector(tangent, 1 / N);
+    pts.push(cur.clone());
+  }
+  return buildTubeMesh(pts, (v) => {
+    const belly = 1 + 0.24 * Math.sin(v * Math.PI);
+    const taper = lerp(1, 0.30, Math.pow(v, 1.7));
+    const nub = v < 0.06 ? 1 + (0.06 - v) * 3.2 : 1;
+    return 0.046 * belly * taper * nub;
+  }, 8, () => new THREE.Color(1, 1, 1));
+}
+const FINGER_GEO = buildFingerGeometry();
+const fingerMat = new THREE.MeshStandardMaterial({ roughness: 0.42, metalness: 0.04 });
+const MAX_PLANT_SLOTS = 3;
+const HAND_CAP = 8, FINGER_CAP = 18;
+const PER_PLANT_FINGER_CAP = HAND_CAP * FINGER_CAP;
+const fingerMesh = new THREE.InstancedMesh(FINGER_GEO, fingerMat, MAX_PLANT_SLOTS * PER_PLANT_FINGER_CAP);
+fingerMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+fingerMesh.castShadow = true; fingerMesh.receiveShadow = true;
+fingerMesh.frustumCulled = false;
+const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
+for (let i = 0; i < fingerMesh.count; i++) fingerMesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
+fingerMesh.instanceMatrix.needsUpdate = true;
+scene.add(fingerMesh);
+const _dummyObj = new THREE.Object3D();
+
+function fingerColor(ripenT, declineWither) {
+  const green = new THREE.Color(0x3d6b2a);
+  const paleGreen = new THREE.Color(0x8fae3f);
+  const yellow = new THREE.Color(0xe8c93a);
+  const spotted = new THREE.Color(0x8a6a2a);
+  let c;
+  if (ripenT < 0.5) c = green.clone().lerp(paleGreen, ripenT / 0.5);
+  else if (ripenT < 0.85) c = paleGreen.clone().lerp(yellow, (ripenT - 0.5) / 0.35);
+  else c = yellow.clone().lerp(spotted, (ripenT - 0.85) / 0.15);
+  if (declineWither > 0) c.lerp(new THREE.Color(0x4a3220), declineWither * 0.7);
+  return c;
+}
+
+/* =========================================================================
+   PLANT (single organism: pseudostem + leaves; lifecycle driven by t in [0,1])
+   ========================================================================= */
+class Plant {
+  constructor(scene, opts) {
+    this.scene = scene;
+    this.basePos = opts.basePos.clone();
+    this.isAnchor = !!opts.isAnchor;
+    this.slotIndex = opts.slotIndex || 0;
+    this.fingerBase = this.slotIndex * PER_PLANT_FINGER_CAP;
+
+    this.group = new THREE.Group();
+    this.group.position.copy(this.basePos);
+    scene.add(this.group);
+
+    this.crownGroup = new THREE.Group();
+    this.group.add(this.crownGroup);
+
+    const cormGeo = new THREE.SphereGeometry(0.16, 10, 7);
+    cormGeo.scale(1, 0.5, 1);
+    this.cormMat = new THREE.MeshStandardMaterial({ color: 0x5a4326, roughness: 1 });
+    this.corm = new THREE.Mesh(cormGeo, this.cormMat);
+    this.corm.position.y = 0.015;
+    this.corm.castShadow = this.corm.receiveShadow = true;
+    this.group.add(this.corm);
+
+    this.pseudoMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.02 });
+    this.pseudoMesh = new THREE.Mesh(new THREE.BufferGeometry(), this.pseudoMat);
+    this.pseudoMesh.castShadow = this.pseudoMesh.receiveShadow = true;
+    this.group.add(this.pseudoMesh);
+
+    this.peduncleMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
+    this.peduncleMesh = new THREE.Mesh(new THREE.BufferGeometry(), this.peduncleMat);
+    this.peduncleMesh.castShadow = this.peduncleMesh.receiveShadow = true;
+    this.peduncleMesh.visible = false;
+    this.crownGroup.add(this.peduncleMesh);
+
+    this.leafMeshes = [];
+    this.bractMeshes = [];
+    this._initSeed(opts.seed);
+  }
+
+  _initSeed(seed) {
+    this.seed = seed;
+    this.rng = mulberry32(seed);
+    const rng = this.rng;
+    this.T = CYCLE_T * (0.92 + rng() * 0.16);
+    this.age = 0;
+    this.pupsSpawnedThisCycle = false;
+    this.scaleVariance = 0.82 + rng() * 0.34;
+    this.group.rotation.y = rng() * Math.PI * 2;
+    this._leanDir = rng() < 0.5 ? -1 : 1;
+    this._leanDir2 = rng() < 0.5 ? -1 : 1;
+    this._lastT = -1;
+    this._streakRng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
+    this._streaks = [];
+    for (let i = 0; i < 14; i++) this._streaks.push(this._streakRng());
+
+    const LEAF_COUNT = 12 + Math.floor(rng() * 3);
+    this.leafDefs = [];
+    for (let i = 0; i < LEAF_COUNT; i++) {
+      const bornT = Math.max(0.01, 0.02 + (i / (LEAF_COUNT - 1)) * 0.42 + (rng() - 0.5) * 0.015);
+      this.leafDefs.push({
+        index: i, bornT,
+        angle: i * 2.399963 + rng() * 0.3,
+        lengthMult: 0.78 + 0.27 * (i / (LEAF_COUNT - 1)) + rng() * 0.1,
+        widthMult: 0.85 + rng() * 0.2,
+        baseTilt: 0.28 + rng() * 0.16,
+        twist: (rng() - 0.5) * 0.5,
+        lifespanT: 0.58 + rng() * 0.24,
+        mottleSeed: rng() * 1000,
+      });
+    }
+    this._ensureLeafPool(LEAF_COUNT);
+
+    this.peduncleAzimuth = rng() * Math.PI * 2;
+    this.peduncleSway = rng();
+    this.phiFinal = 2.55 + rng() * 0.35;
+    this.peduncleLenMax = 1.55 + rng() * 0.35;
+    const HAND_COUNT = Math.min(HAND_CAP, 5 + Math.floor(rng() * 3));
+    this.handDefs = [];
+    for (let i = 0; i < HAND_COUNT; i++) {
+      const frac = HAND_COUNT > 1 ? i / (HAND_COUNT - 1) : 0;
+      this.handDefs.push({
+        index: i,
+        uPos: 0.16 + frac * 0.62,
+        bornT: 0.55 + frac * 0.20 + (rng() - 0.5) * 0.01,
+        fingerCount: Math.min(FINGER_CAP, 9 + Math.floor(rng() * 6)),
+        ringRadius: 0.040 + rng() * 0.014,
+        sizeJitter: 0.85 + rng() * 0.3,
+        fingerAzimuthOffset: rng() * Math.PI * 2,
+        bractHingeSeed: rng(),
+        ripenJitter: rng() * 0.05,
+      });
+    }
+    this._ensureBractPool(HAND_COUNT + 1);
+  }
+
+  _ensureBractPool(count) {
+    while (this.bractMeshes.length < count) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0x9c2148, roughness: 0.55, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(BRACT_GEO, mat);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.visible = false;
+      this.crownGroup.add(mesh);
+      this.bractMeshes.push({ mesh, material: mat });
+    }
+    while (this.bractMeshes.length > count) {
+      const b = this.bractMeshes.pop();
+      this.crownGroup.remove(b.mesh);
+      b.material.dispose();
+    }
+  }
+
+  _ensureLeafPool(count) {
+    while (this.leafMeshes.length < count) {
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, side: THREE.DoubleSide, shadowSide: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      this.crownGroup.add(mesh);
+      this.leafMeshes.push({ mesh, material: mat });
+    }
+    while (this.leafMeshes.length > count) {
+      const lm = this.leafMeshes.pop();
+      this.crownGroup.remove(lm.mesh);
+      lm.mesh.geometry.dispose(); lm.material.dispose();
+    }
+  }
+
+  reset(seed) { this._initSeed(seed); }
+
+  updateGrowth(t) {
+    this.currentT = t;
+    const sv = this.scaleVariance;
+    const H = pseudoHeight(t) * sv;
+    const baseR = pseudoRadius(t) * sv;
+    const youngness = 1 - smoothstep(0.0, 0.10, t);
+    const declineBrown = smoothstep(0.85, 1.0, t);
+
+    this.pseudoMesh.geometry.dispose();
+    this.pseudoMesh.geometry = buildPseudostemGeometry({
+      height: H, baseRadius: baseR, radialSegments: 12, heightSegments: 12,
+      streaks: this._streaks, youngness, declineBrown,
+    });
+    this.corm.scale.setScalar(0.55 * sv + 0.45);
+
+    const crownY = H;
+    for (let i = 0; i < this.leafDefs.length; i++) {
+      const def = this.leafDefs[i];
+      const lm = this.leafMeshes[i];
+      const leafAgeRaw = (t - def.bornT) / def.lifespanT;
+      if (t < def.bornT - 0.002) { lm.mesh.visible = false; continue; }
+      const leafAge = Math.max(0, leafAgeRaw);
+      let fallShrink = 1;
+      if (leafAge > 1) fallShrink = Math.max(0, 1 - (leafAge - 1) / 0.4);
+      if (fallShrink <= 0.01) { lm.mesh.visible = false; continue; }
+      lm.mesh.visible = true;
+
+      const unfurlT = clamp01((t - def.bornT) / 0.045);
+      const sizeT = clamp01((t - def.bornT) / 0.11);
+      const sizeEase = easeOutCubic(sizeT);
+      const scale = lerp(0.16, 1, sizeEase) * def.lengthMult * sv * LEAF_MAX_LEN * fallShrink;
+      const droopAmt = leafDroop(Math.min(leafAge, 1.3));
+
+      const geo = buildLeafGeometry({
+        azimuth: def.angle, baseTilt: def.baseTilt, droopAmt, twist: def.twist,
+        unfurlT, scale, widthMult: def.widthMult, leafAge: Math.min(leafAge, 1.3), mottleSeed: def.mottleSeed,
+      });
+      lm.mesh.geometry.dispose();
+      lm.mesh.geometry = geo;
+      const attachY = Math.max(0.02, crownY - (this.leafDefs.length - 1 - i) * 0.018 * sv);
+      lm.mesh.position.set(0, attachY, 0);
+    }
+
+    this._updateInflorescence(t, sv, crownY);
+
+    const lean = smoothstep(0.90, 1.0, t) * 0.5;
+    this.crownGroup.rotation.z = lean * this._leanDir;
+    this.crownGroup.rotation.x = lean * 0.3 * this._leanDir2;
+  }
+
+  _clearFingerSlots() {
+    for (let k = 0; k < PER_PLANT_FINGER_CAP; k++) fingerMesh.setMatrixAt(this.fingerBase + k, ZERO_SCALE_MATRIX);
+  }
+
+  _curveSample(points, stepU, u) {
+    const maxU = (points.length - 1) * stepU;
+    const uu = Math.min(Math.max(u, 0), maxU);
+    const idxF = stepU > 1e-9 ? uu / stepU : 0;
+    const i0 = Math.min(points.length - 2, Math.floor(idxF));
+    const frac = idxF - i0;
+    const p = points[i0].clone().lerp(points[i0 + 1], frac);
+    const tangent = points[i0 + 1].clone().sub(points[i0]).normalize();
+    return { p, tangent };
+  }
+
+  _updateInflorescence(t, sv, crownY) {
+    const FLOWER_START = 0.46;
+    const Ucur = clamp01(smoothstep(FLOWER_START, 0.80, t));
+    const active = Ucur > 0.003;
+    this.peduncleMesh.visible = active;
+    if (!active) {
+      for (const b of this.bractMeshes) b.mesh.visible = false;
+      this._clearFingerSlots();
+      return;
+    }
+
+    const outDir = new THREE.Vector3(Math.cos(this.peduncleAzimuth), 0, Math.sin(this.peduncleAzimuth));
+    const NSAMP = 26;
+    const nPts = Math.max(2, Math.round(NSAMP * Ucur) + 2);
+    const points = [new THREE.Vector3(0, crownY, 0)];
+    const stepU = Ucur / (nPts - 1);
+    const swayDir = new THREE.Vector3(-outDir.z, 0, outDir.x);
+    let cur = points[0];
+    for (let i = 1; i < nPts; i++) {
+      const u = i * stepU;
+      const phi = this.phiFinal * smoothstep(0, 0.42, u);
+      const sway = Math.sin(u * 5.3 + this.peduncleSway * 6.0) * 0.10 * u;
+      const tangent = new THREE.Vector3()
+        .addScaledVector(WORLD_UP, Math.cos(phi))
+        .addScaledVector(outDir, Math.sin(phi))
+        .addScaledVector(swayDir, sway).normalize();
+      cur = cur.clone().addScaledVector(tangent, this.peduncleLenMax * sv * stepU);
+      points.push(cur);
+    }
+
+    const declineWither = smoothstep(0.85, 0.97, t);
+    const radiusBase = 0.05 * sv, radiusTip = 0.024 * sv;
+    this.peduncleMesh.geometry.dispose();
+    this.peduncleMesh.geometry = buildTubeMesh(
+      points,
+      (v) => lerp(radiusBase, radiusTip, v) * (1 - declineWither * 0.3),
+      10,
+      (v) => new THREE.Color(0x4a7a34).lerp(new THREE.Color(0x6a4a2a), declineWither * 0.6)
+    );
+
+    this._clearFingerSlots();
+    for (const def of this.handDefs) this._updateHand(def, t, sv, points, stepU, Ucur, declineWither);
+    this._updateMaleBud(t, sv, points, stepU, Ucur);
+
+    fingerMesh.instanceMatrix.needsUpdate = true;
+    if (fingerMesh.instanceColor) fingerMesh.instanceColor.needsUpdate = true;
+  }
+
+  _updateHand(def, t, sv, points, stepU, Ucur, declineWither) {
+    const bract = this.bractMeshes[def.index];
+    const revealed = Ucur >= def.uPos && t >= def.bornT;
+    if (!revealed) { bract.mesh.visible = false; return; }
+
+    const { p, tangent } = this._curveSample(points, stepU, def.uPos);
+    const openT = clamp01((t - def.bornT) / 0.09);
+    const dropT = clamp01((t - def.bornT - 0.30) / 0.15);
+    const bractScale = (1 - dropT) * sv * (0.34 + 0.05 * Math.sin(def.index * 13.1));
+    bract.mesh.visible = bractScale > 0.02;
+    if (bract.mesh.visible) {
+      const baseQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
+      let ref = Math.abs(tangent.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : WORLD_UP.clone();
+      ref = ref.applyAxisAngle(tangent, def.bractHingeSeed * Math.PI * 2);
+      const sideAxis = new THREE.Vector3().crossVectors(tangent, ref).normalize();
+      const hingeAngle = lerp(0.15, 2.55, easeOutCubic(openT));
+      const hingeQuat = new THREE.Quaternion().setFromAxisAngle(sideAxis, hingeAngle);
+      bract.mesh.quaternion.copy(hingeQuat.multiply(baseQuat));
+      bract.mesh.position.copy(p);
+      bract.mesh.scale.setScalar(bractScale);
+      const freshCol = new THREE.Color(0x9c2148);
+      const openCol = new THREE.Color(0x6b3a2a);
+      bract.material.color.copy(freshCol).lerp(openCol, easeOutCubic(openT));
+    }
+
+    this._setHandFingers(def, { p, tangent, t, sv, declineWither });
+  }
+
+  _setHandFingers(def, ctx) {
+    const base = this.fingerBase + def.index * FINGER_CAP;
+    const { p, tangent, t, sv, declineWither } = ctx;
+    const growT = clamp01((t - def.bornT - 0.03) / 0.16);
+    const growEase = easeOutCubic(growT);
+    if (growT <= 0.001) return;
+    const ripenStart = 0.10 + def.ripenJitter * 1.6;
+    const ripenT = clamp01((t - def.bornT - ripenStart) / 0.15);
+
+    const sideAxis = new THREE.Vector3().crossVectors(tangent, Math.abs(tangent.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : WORLD_UP).normalize();
+    const biAxis = new THREE.Vector3().crossVectors(tangent, sideAxis).normalize();
+    const scale = lerp(0.09, 1.0, growEase) * sv * def.sizeJitter * 0.42;
+    const col = fingerColor(ripenT, declineWither);
+
+    for (let k = 0; k < def.fingerCount; k++) {
+      const az = def.fingerAzimuthOffset + (k / def.fingerCount) * Math.PI * 2;
+      const radial = sideAxis.clone().multiplyScalar(Math.cos(az)).add(biAxis.clone().multiplyScalar(Math.sin(az))).normalize();
+      const fingerPos = p.clone().addScaledVector(radial, def.ringRadius * sv);
+
+      const localX = radial;
+      let localY = WORLD_UP.clone().sub(localX.clone().multiplyScalar(WORLD_UP.dot(localX)));
+      if (localY.lengthSq() < 1e-6) localY = tangent.clone();
+      localY.normalize();
+      const localZ = new THREE.Vector3().crossVectors(localX, localY).normalize();
+      localY.crossVectors(localZ, localX).normalize();
+      const m = new THREE.Matrix4().makeBasis(localX, localY, localZ);
+
+      _dummyObj.position.copy(fingerPos);
+      _dummyObj.quaternion.setFromRotationMatrix(m);
+      _dummyObj.scale.setScalar(scale);
+      _dummyObj.updateMatrix();
+      fingerMesh.setMatrixAt(base + k, _dummyObj.matrix);
+      fingerMesh.setColorAt(base + k, col);
+    }
+  }
+
+  _updateMaleBud(t, sv, points, stepU, Ucur) {
+    const bract = this.bractMeshes[this.handDefs.length];
+    const witherT = smoothstep(0.84, 0.97, t);
+    const scale = (1 - witherT) * sv * 0.5;
+    if (Ucur <= 0.01 || scale <= 0.02) { bract.mesh.visible = false; return; }
+    const { p, tangent } = this._curveSample(points, stepU, Ucur);
+    bract.mesh.visible = true;
+    bract.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
+    bract.mesh.position.copy(p);
+    bract.mesh.scale.setScalar(scale * 1.3);
+    bract.material.color.set(0x7a1f3f).lerp(new THREE.Color(0x5a3a28), witherT * 0.7);
+  }
+
+  dispose() {
+    this.pseudoMesh.geometry.dispose(); this.pseudoMat.dispose();
+    this.peduncleMesh.geometry.dispose(); this.peduncleMat.dispose();
+    for (const lm of this.leafMeshes) { lm.mesh.geometry.dispose(); lm.material.dispose(); }
+    for (const b of this.bractMeshes) { b.material.dispose(); }
+    this._clearFingerSlots();
+    fingerMesh.instanceMatrix.needsUpdate = true;
+    if (fingerMesh.instanceColor) fingerMesh.instanceColor.needsUpdate = true;
+    this.corm.geometry.dispose(); this.cormMat.dispose();
+    this.scene.remove(this.group);
+  }
+}
+
+/* =========================================================================
+   CLUMP MANAGER: one anchor plant (always resets in place) + pups that
+   spawn near a parent during its decline and grow their own independent
+   lifecycle, so the mat evolves and loops forever without unbounded growth.
+   ========================================================================= */
+class ClumpManager {
+  constructor(scene) {
+    this.scene = scene;
+    this.plants = [];
+    this.nextSeed = 1;
+    this._spawnAnchor();
+  }
+
+  _freeSlot() {
+    const used = new Set(this.plants.map((p) => p.slotIndex));
+    for (let i = 0; i < MAX_PLANT_SLOTS; i++) if (!used.has(i)) return i;
+    return -1;
+  }
+
+  _spawnAnchor() {
+    const slot = this._freeSlot();
+    const plant = new Plant(this.scene, { seed: this.nextSeed++, basePos: new THREE.Vector3(0, 0, 0), isAnchor: true, slotIndex: slot });
+    plant.updateGrowth(0);
+    this.plants.push(plant);
+    this.anchor = plant;
+  }
+
+  _spawnPup(parent) {
+    const slot = this._freeSlot();
+    if (slot < 0) return;
+    const ang = parent.rng() * Math.PI * 2;
+    const rad = 0.28 + parent.rng() * 0.26;
+    const pos = parent.basePos.clone().add(new THREE.Vector3(Math.cos(ang) * rad, 0, Math.sin(ang) * rad));
+    if (pos.length() > 1.25) pos.setLength(1.25);
+    const plant = new Plant(this.scene, { seed: this.nextSeed++, basePos: pos, isAnchor: false, slotIndex: slot });
+    plant.updateGrowth(0);
+    this.plants.push(plant);
+  }
+
+  update(dt) {
+    for (let i = this.plants.length - 1; i >= 0; i--) {
+      const p = this.plants[i];
+      p.age += dt;
+      let t = p.age / p.T;
+      if (t >= 1) {
+        if (p.isAnchor) {
+          p.reset(this.nextSeed++);
+          t = 0;
+        } else {
+          p.dispose();
+          this.plants.splice(i, 1);
+          continue;
+        }
+      }
+      if (Math.abs(t - p._lastT) > 0.0015 || t < p._lastT) {
+        p.updateGrowth(t);
+        p._lastT = t;
+      }
+      if (t > 0.80 && !p.pupsSpawnedThisCycle) {
+        p.pupsSpawnedThisCycle = true;
+        this._spawnPup(p);
+        if (p.rng() < 0.4) this._spawnPup(p);
+      }
+    }
+  }
+}
+
+const clumpManager = new ClumpManager(scene);
+
+// ---- Speed dial widget logic ----
+const dialEl = document.getElementById('speed-dial');
+const dialSvg = dialEl.querySelector('svg');
+const dialTrack = dialEl.querySelector('.dial-track');
+const dialFill = dialEl.querySelector('.dial-fill');
+const dialKnobWrap = dialEl.querySelector('.dial-knob-wrap');
+const dialKnob = dialEl.querySelector('.dial-knob');
+const dialCenter = dialEl.querySelector('.dial-center');
+const dialValueText = dialEl.querySelector('.dial-value');
+const dialTicksG = dialEl.querySelector('.dial-ticks');
+
+const DIAL_CX = 54, DIAL_CY = 54, DIAL_R = 38;
+const ANGLE_MIN = -140, ANGLE_MAX = 140; // degrees, 0 = up
+const SPEED_MIN = 0, SPEED_MAX = 4, SPEED_DEFAULT = 1;
+
+function angleToPoint(angleDeg, radius) {
+  const rad = (angleDeg - 90) * Math.PI / 180;
+  return { x: DIAL_CX + Math.cos(rad) * radius, y: DIAL_CY + Math.sin(rad) * radius };
+}
+function describeArc(startDeg, endDeg, radius) {
+  const p0 = angleToPoint(startDeg, radius);
+  const p1 = angleToPoint(endDeg, radius);
+  const largeArc = (endDeg - startDeg) > 180 ? 1 : 0;
+  return `M ${p0.x.toFixed(2)} ${p0.y.toFixed(2)} A ${radius} ${radius} 0 ${largeArc} 1 ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
+}
+dialTrack.setAttribute('d', describeArc(ANGLE_MIN, ANGLE_MAX, DIAL_R));
+
+// tick marks
+for (let i = 0; i <= 8; i++) {
+  const a = ANGLE_MIN + (i / 8) * (ANGLE_MAX - ANGLE_MIN);
+  const p0 = angleToPoint(a, DIAL_R - 3);
+  const p1 = angleToPoint(a, DIAL_R + 3);
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('class', 'dial-tick');
+  line.setAttribute('x1', p0.x); line.setAttribute('y1', p0.y);
+  line.setAttribute('x2', p1.x); line.setAttribute('y2', p1.y);
+  dialTicksG.appendChild(line);
+}
+
+let currentSpeed = SPEED_DEFAULT;
+let speedBeforePause = SPEED_DEFAULT;
+let isPaused = false;
+
+function speedToAngle(s) {
+  const t = (s - SPEED_MIN) / (SPEED_MAX - SPEED_MIN);
+  return ANGLE_MIN + t * (ANGLE_MAX - ANGLE_MIN);
+}
+function updateDialVisual() {
+  const angle = speedToAngle(currentSpeed);
+  const knobPt = angleToPoint(angle, DIAL_R);
+  dialKnob.setAttribute('cx', knobPt.x);
+  dialKnob.setAttribute('cy', knobPt.y);
+  dialFill.setAttribute('d', currentSpeed > SPEED_MIN ? describeArc(ANGLE_MIN, angle, DIAL_R) : '');
+  dialValueText.textContent = isPaused ? 'II' : `${currentSpeed.toFixed(1)}×`;
+  dialEl.classList.toggle('paused', isPaused);
+}
+updateDialVisual();
+
+function angleFromPointer(clientX, clientY) {
+  const rect = dialSvg.getBoundingClientRect();
+  const scaleX = 108 / rect.width, scaleY = 108 / rect.height;
+  const x = (clientX - rect.left) * scaleX - DIAL_CX;
+  const y = (clientY - rect.top) * scaleY - DIAL_CY;
+  let deg = Math.atan2(y, x) * 180 / Math.PI + 90;
+  if (deg > 180) deg -= 360;
+  if (deg < -180) deg += 360;
+  return deg;
+}
+
+let dragging = false;
+function pointerToSpeed(clientX, clientY) {
+  let deg = angleFromPointer(clientX, clientY);
+  deg = Math.max(ANGLE_MIN, Math.min(ANGLE_MAX, deg));
+  const t = (deg - ANGLE_MIN) / (ANGLE_MAX - ANGLE_MIN);
+  return SPEED_MIN + t * (SPEED_MAX - SPEED_MIN);
+}
+function onDialPointerDown(e) {
+  dragging = true;
+  isPaused = false;
+  dialKnobWrap.setPointerCapture && e.pointerId != null && dialSvg.setPointerCapture(e.pointerId);
+  onDialPointerMove(e);
+  e.preventDefault();
+}
+function onDialPointerMove(e) {
+  if (!dragging) return;
+  currentSpeed = pointerToSpeed(e.clientX, e.clientY);
+  updateDialVisual();
+}
+function onDialPointerUp() { dragging = false; }
+dialSvg.addEventListener('pointerdown', (e) => {
+  if (e.target === dialCenter) return; // handled by click toggle below
+  onDialPointerDown(e);
+});
+window.addEventListener('pointermove', onDialPointerMove);
+window.addEventListener('pointerup', onDialPointerUp);
+
+dialCenter.addEventListener('click', () => {
+  isPaused = !isPaused;
+  if (isPaused) { speedBeforePause = currentSpeed > 0.001 ? currentSpeed : SPEED_DEFAULT; }
+  else { currentSpeed = speedBeforePause; }
+  updateDialVisual();
+});
+
+function getEffectiveSpeed() { return isPaused ? 0 : currentSpeed; }
+
+// ---- Resize handling ----
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---- Animation loop ----
+const clock = new THREE.Clock();
+let simTime = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const spd = getEffectiveSpeed();
+  simTime += dt * spd;
+
+  clumpManager.update(dt * spd);
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+const loadingEl = document.getElementById('loading');
+requestAnimationFrame(() => {
+  loadingEl.style.opacity = '0';
+  setTimeout(() => loadingEl.remove(), 650);
+});
+
+animate();
+</script>
+</body>
+</html>

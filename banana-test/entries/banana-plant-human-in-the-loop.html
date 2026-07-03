@@ -1,0 +1,1692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Banana plant — procedural growth</title>
+<style>
+  :root { --ink:#0e1b12; }
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; background:#0b0f0c;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+
+  .title { position:fixed; top:18px; left:20px; z-index:5; color:#fff;
+    text-shadow:0 1px 12px rgba(0,0,0,.55); pointer-events:none; }
+  .title h1 { margin:0; font-size:15px; font-weight:650; letter-spacing:.2px; }
+  .title p  { margin:3px 0 0; font-size:12px; opacity:.78; font-weight:450; }
+
+  .panel { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:5;
+    display:flex; align-items:center; gap:16px; padding:11px 16px;
+    background:rgba(16,24,18,.62); backdrop-filter:blur(14px) saturate(1.2);
+    border:1px solid rgba(255,255,255,.10); border-radius:14px; color:#eaf1ea;
+    box-shadow:0 10px 40px rgba(0,0,0,.4); font-size:12.5px; max-width:92vw; }
+  .panel .stage { min-width:118px; opacity:.85; font-variant-numeric:tabular-nums; }
+  .panel input[type=range]{ width:210px; accent-color:#7ec85a; }
+  .btn { appearance:none; border:1px solid rgba(255,255,255,.16); color:#eaf1ea;
+    background:rgba(255,255,255,.06); padding:7px 12px; border-radius:9px; cursor:pointer;
+    font-size:12.5px; font-weight:550; transition:.15s; white-space:nowrap; }
+  .btn:hover { background:rgba(126,200,90,.20); border-color:rgba(126,200,90,.5); }
+  .btn.on { background:rgba(126,200,90,.28); border-color:rgba(126,200,90,.6); }
+  .sep { width:1px; height:24px; background:rgba(255,255,255,.14); }
+  .lbl { opacity:.7; }
+  @media (max-width:640px){ .panel{ gap:10px; flex-wrap:wrap; justify-content:center; }
+    .panel input[type=range]{ width:150px; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="title">
+  <h1>Banana plant — procedural growth</h1>
+  <p>Three.js · an endless banana mat — plants grow, fruit, die &amp; their pups succeed them · drag to orbit</p>
+</div>
+<div class="panel">
+  <button class="btn" id="regrow">🌱 New clump</button>
+  <button class="btn" id="replay">⏸ Pause</button>
+  <div class="sep"></div>
+  <span class="lbl">Speed</span>
+  <input id="grow" type="range" min="0" max="1000" value="333" />
+  <span class="stage" id="stage">—</span>
+  <div class="sep"></div>
+  <button class="btn on" id="rot">Auto-rotate</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const lerp = THREE.MathUtils.lerp;
+const clamp = THREE.MathUtils.clamp;
+const smooth = (x)=>{ x=clamp(x,0,1); return x*x*(3-2*x); };
+const ease = (x)=>{ x=clamp(x,0,1); return 1-Math.pow(1-x,2.4); };
+
+const CFG = {
+  stemHeight: 3.2,      // full pseudostem height to the crown
+  stemFull: 0.50,       // stem reaches full height by here, then flowers (terminal)
+  nLeaves: 13,
+  leafLen: 3.0,
+  spawnGap: 0.037,      // timeline gap between successive leaves emerging
+  emergeDur: 0.014,     // tight furled spear telescopes up out of the throat
+  unfurlDur: 0.020,     // then it unfurls (emerge+unfurl < spawnGap => one at a time)
+  flowerStart: 0.52,    // inflorescence emerges after the last (flag) leaf
+  duration: 32.0,       // seconds for the auto growth animation
+};
+
+// ----------------------------------------------------------------------------
+// Per-plant random parameters — RESAMPLED on every (re)grow, so refreshing the
+// page or hitting "New plant" yields a different individual: size, health, how
+// spotty the young leaves are, which old leaves dry out and die, flower length,
+// number of pups. Realism = variation within a distribution, not one fixed plant.
+// ----------------------------------------------------------------------------
+const rnd    = (a,b)=> a + Math.random()*(b-a);
+const rndInt = (a,b)=> Math.floor(a + Math.random()*(b-a+1));
+const DEAD_STEM = new THREE.Color(0x93744a);     // a spent, dying pseudostem
+const _c1 = new THREE.Color();                    // scratch
+function samplePlant(){
+  // health 1 = lush (every leaf alive); 0 = drought-stressed (old leaves dead).
+  // Skewed toward healthy, but a plant carrying a skirt of a few dead older leaves
+  // is the common case; a perfectly green plant (great spot, plenty of water) is a
+  // real minority, and a badly stressed, half-dead plant is rarer still.
+  const health  = Math.pow(Math.random(), 0.7);
+  const nLeaves = rndInt(11, 15);
+  const gap     = Math.min(CFG.spawnGap, 0.47/nLeaves);   // all leaves emerge before flowering
+  const p = {
+    health, nLeaves, gap,
+    stemHeight: rnd(2.85, 3.6),
+    leafLen:    rnd(2.7, 3.25),
+    dropU:      rnd(1.32, 1.72),       // pendant flower length (a bit shorter; clear of the soil)
+    vigor:      rnd(0.82, 1.12),       // overall size / greenness
+    spotBias:   rnd(0.5, 1.5),         // how heavily this plant's young leaves are marked
+    swayAmt:    rnd(0.8, 1.35),
+    nPups:      Math.random()<0.10 ? 0 : rndInt(1, 3),   // zero or more suckers
+
+    lean:       rnd(-0.05, 0.05),
+  };
+  // How many of the OLDEST leaves are doomed to dry out and die this life. A few
+  // is typical; the top 4 always stay green (new growth is alive). Never wipes the
+  // canopy — the worst case still leaves a living crown.
+  p.maxDead = Math.max(0, Math.min(nLeaves-4,
+    Math.round((nLeaves-3) * Math.pow(1-health, 1.5) * 0.72 - 0.4 + rnd(0, 0.9))));
+  return p;
+}
+
+// Height of the pseudostem top at growth time t. Near-linear so successive
+// leaves (born at even time steps) end up EVENLY spaced up the trunk — a real
+// banana strings its leaves along the whole stem, it is not a top crown (palm).
+// Saturates at CFG.stemFull: banana flowering is terminal, at full height.
+function heightFrac(t){ const k=clamp(t/CFG.stemFull,0,1); return 0.06 + 0.94*(0.80*k + 0.20*smooth(k)); }
+function stemTopAt(t, sh){ return sh * heightFrac(t); }
+// A pup breaks ground SLOWLY: the first stretch of life (clearing the soil,
+// unfurling its first tiny leaves) creeps along, then the climb accelerates.
+// Warps growth-time t inside the germination window only; identical afterwards, so
+// flowering timing is unchanged.
+function growEase(raw){ const g=0.34; return raw<g ? g*Math.pow(raw/g, 1.9) : raw; }
+
+// ----------------------------------------------------------------------------
+// Renderer / scene / camera
+// ----------------------------------------------------------------------------
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.06;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = skyTexture();
+scene.fog = new THREE.Fog(0xcfe0d8, 16, 42);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(5.4, 2.7, 7.0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.target.set(0, 2.0, 0);
+controls.minDistance = 3.5;
+controls.maxDistance = 22;
+controls.maxPolarAngle = Math.PI*0.92;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.55;
+
+// Environment lighting (soft PBR reflections, no external HDR file)
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// ----------------------------------------------------------------------------
+// Lights
+// ----------------------------------------------------------------------------
+scene.add(new THREE.HemisphereLight(0xc7ddff, 0x8a9456, 1.05));
+
+const sun = new THREE.DirectionalLight(0xfff1d4, 2.4);
+sun.position.set(6, 11, 4.5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 40;
+sun.shadow.camera.left = -8; sun.shadow.camera.right = 8;
+sun.shadow.camera.top = 9;  sun.shadow.camera.bottom = -2;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0xcfe0ff, 0.65);
+fill.position.set(-6, 4, -5);
+scene.add(fill);
+
+// ----------------------------------------------------------------------------
+// Ground + soil mound
+// ----------------------------------------------------------------------------
+// (ground + soil mound + banana pup are built later, once textures exist)
+
+// ----------------------------------------------------------------------------
+// Textures (procedural, on a <canvas>)
+// ----------------------------------------------------------------------------
+function skyTexture(){
+  const c = document.createElement('canvas'); c.width=4; c.height=512;
+  const g = c.getContext('2d');
+  const grd = g.createLinearGradient(0,0,0,512);
+  grd.addColorStop(0.0, '#7fa9d8');
+  grd.addColorStop(0.45,'#aecbe0');
+  grd.addColorStop(0.72,'#dfe9df');
+  grd.addColorStop(1.0, '#eef1e3');
+  g.fillStyle = grd; g.fillRect(0,0,4,512);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function leafColorTexture(){
+  const w=768, h=1536;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  // base vertical gradient: base -> mid -> tip
+  const grd=g.createLinearGradient(0,0,0,h);
+  grd.addColorStop(0.0,'#7fab4c');
+  grd.addColorStop(0.25,'#5c9c3c');
+  grd.addColorStop(0.7,'#4b9032');
+  grd.addColorStop(1.0,'#41862b');
+  g.fillStyle=grd; g.fillRect(0,0,w,h);
+  // sideways shading: slightly darker toward edges
+  const sg=g.createLinearGradient(0,0,w,0);
+  sg.addColorStop(0.0,'rgba(20,40,15,0.30)');
+  sg.addColorStop(0.5,'rgba(255,255,255,0.05)');
+  sg.addColorStop(1.0,'rgba(20,40,15,0.30)');
+  g.fillStyle=sg; g.fillRect(0,0,w,h);
+  // secondary veins (run from midrib to edge, angled toward tip)
+  g.lineWidth=1.4;
+  for(let y=18;y<h;y+=15){
+    g.strokeStyle='rgba(20,55,16,0.34)';
+    g.beginPath(); g.moveTo(w/2,y); g.lineTo(8, y-46); g.stroke();
+    g.beginPath(); g.moveTo(w/2,y); g.lineTo(w-8, y-46); g.stroke();
+    g.strokeStyle='rgba(150,190,110,0.12)';
+    g.beginPath(); g.moveTo(w/2,y+2); g.lineTo(8, y-44); g.stroke();
+    g.beginPath(); g.moveTo(w/2,y+2); g.lineTo(w-8, y-44); g.stroke();
+  }
+  // midrib
+  const mg=g.createLinearGradient(w/2-16,0,w/2+16,0);
+  mg.addColorStop(0,'rgba(120,160,70,0)');
+  mg.addColorStop(0.5,'rgba(190,210,120,0.85)');
+  mg.addColorStop(1,'rgba(120,160,70,0)');
+  g.fillStyle=mg; g.fillRect(w/2-16,0,32,h);
+  // pale leaf margin
+  g.strokeStyle='rgba(190,205,120,0.5)'; g.lineWidth=6;
+  g.strokeRect(3,3,w-6,h-6);
+  // subtle mottling
+  for(let i=0;i<900;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=2+Math.random()*9;
+    g.fillStyle=`rgba(${20+Math.random()*40|0},${60+Math.random()*50|0},${20+Math.random()*30|0},0.05)`;
+    g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=8;
+  return t;
+}
+
+function leafBumpTexture(){
+  const w=384, h=768;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  g.fillStyle='#808080'; g.fillRect(0,0,w,h);
+  g.lineWidth=2;
+  for(let y=10;y<h;y+=8){
+    g.strokeStyle='#d8d8d8';
+    g.beginPath(); g.moveTo(w/2,y); g.lineTo(4,y-23); g.stroke();
+    g.beginPath(); g.moveTo(w/2,y); g.lineTo(w-4,y-23); g.stroke();
+  }
+  g.fillStyle='#ffffff'; g.fillRect(w/2-6,0,12,h);   // midrib ridge
+  const t=new THREE.CanvasTexture(c); t.anisotropy=8;
+  return t;
+}
+
+// Dwarf Cavendish pseudostem: overlapping waxy leaf-sheaths, glaucous bloom, the
+// species' signature dark maroon/near-black blotching (heaviest low & mid), a
+// papery browned base, faint scar rings where old sheaths fell. v=0 is the TOP
+// of the texture -> mapped to the base of the stem (see UV note in buildStem).
+function stemTexture(){
+  const w=1024, h=1024;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  const grd=g.createLinearGradient(0,0,0,h);   // top of canvas = base of stem (browner/duller)
+  grd.addColorStop(0.0,'#5f6f38');             // dry base
+  grd.addColorStop(0.18,'#6f8a3e');
+  grd.addColorStop(0.55,'#83a24c');            // waxy mid
+  grd.addColorStop(1.0,'#9ab657');             // fresh green crown
+  g.fillStyle=grd; g.fillRect(0,0,w,h);
+  // NSHEATH broad overlapping sheaths: each a soft vertical band with a shaded
+  // seam on its left edge and a waxy highlight down its middle
+  const NSHEATH=5, bw=w/NSHEATH;
+  for(let s=0;s<NSHEATH;s++){
+    const x0=s*bw;
+    const seam=g.createLinearGradient(x0,0,x0+bw,0);
+    seam.addColorStop(0.00,'rgba(28,40,18,0.34)');   // dark overlap shadow at seam
+    seam.addColorStop(0.10,'rgba(28,40,18,0.06)');
+    seam.addColorStop(0.48,'rgba(214,226,176,0.16)'); // waxy sheen ridge
+    seam.addColorStop(0.62,'rgba(214,226,176,0.05)');
+    seam.addColorStop(1.00,'rgba(28,40,18,0.10)');
+    g.fillStyle=seam; g.fillRect(x0,0,bw,h);
+  }
+  // fine vertical fibre striations
+  for(let i=0;i<220;i++){
+    const x=Math.random()*w, jit=(Math.random()*8-4);
+    g.strokeStyle=`rgba(${28+Math.random()*30|0},${46+Math.random()*40|0},${18+Math.random()*20|0},${0.05+Math.random()*0.10})`;
+    g.lineWidth=0.6+Math.random()*1.6;
+    g.beginPath(); g.moveTo(x,0); g.lineTo(x+jit,h); g.stroke();
+  }
+  // signature maroon/near-black blotches — dense low, sparse high (fade with v)
+  for(let i=0;i<680;i++){
+    const v=Math.pow(Math.random(),0.5);        // bias toward the base (small v = top of canvas)
+    const y=v*h*0.9;                             // keep blotches off the fresh crown
+    const x=Math.random()*w;
+    const rad=3+Math.random()*20*(1.0-0.45*v);
+    const dark=Math.random()<0.45;
+    const col=dark ? `rgba(${16+Math.random()*14|0},${9+Math.random()*9|0},${11+Math.random()*10|0},`  // black-maroon
+                   : `rgba(${72+Math.random()*32|0},${22+Math.random()*18|0},${30+Math.random()*20|0},`; // maroon
+    g.fillStyle=col+(0.16+Math.random()*0.42)+')';
+    g.beginPath();
+    // irregular blob
+    const n=6+((Math.random()*4)|0);
+    for(let k=0;k<=n;k++){ const a=k/n*Math.PI*2, rr=rad*(0.6+Math.random()*0.6);
+      const px=x+Math.cos(a)*rr, py=y+Math.sin(a)*rr*0.7; k?g.lineTo(px,py):g.moveTo(px,py); }
+    g.closePath(); g.fill();
+  }
+  // glaucous waxy bloom: pale bluish-white speckle, strongest mid-stem
+  for(let i=0;i<1400;i++){
+    const x=Math.random()*w, y=(0.15+Math.random()*0.7)*h, r=1+Math.random()*3;
+    g.fillStyle=`rgba(206,220,198,${0.02+Math.random()*0.05})`;
+    g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  // papery browned, frayed base (top strip of canvas)
+  const base=g.createLinearGradient(0,0,0,h*0.2);
+  base.addColorStop(0,'rgba(108,86,52,0.7)'); base.addColorStop(1,'rgba(108,86,52,0)');
+  g.fillStyle=base; g.fillRect(0,0,w,h*0.2);
+  for(let i=0;i<160;i++){                        // dry papery flecks & splits at the base
+    const x=Math.random()*w, y=Math.random()*h*0.16, l=6+Math.random()*22;
+    g.strokeStyle=`rgba(${80+Math.random()*40|0},${62+Math.random()*30|0},${36+Math.random()*20|0},${0.15+Math.random()*0.3})`;
+    g.lineWidth=0.8+Math.random()*1.6;
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x+Math.random()*4-2,y+l); g.stroke();
+  }
+  // scar rings where old sheaths abscised
+  for(let i=0;i<7;i++){
+    const y=h*(0.06+0.12*i)+Math.random()*6;
+    g.strokeStyle=`rgba(46,38,24,${0.10+Math.random()*0.12})`; g.lineWidth=1.5+Math.random()*2;
+    g.beginPath(); g.moveTo(0,y); for(let x=0;x<=w;x+=32) g.lineTo(x,y+Math.sin(x*0.03)*2.2); g.stroke();
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.colorSpace=THREE.SRGBColorSpace; t.wrapS=THREE.RepeatWrapping; t.anisotropy=8;
+  return t;
+}
+
+// Bump for the pseudostem: rounded vertical sheath flutes + fibre grooves, so the
+// waxy surface catches the sun as soft ridges rather than reading as a flat tube.
+function stemBumpTexture(){
+  const w=1024, h=1024;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  const NSHEATH=5, bw=w/NSHEATH;
+  g.fillStyle='#808080'; g.fillRect(0,0,w,h);
+  for(let s=0;s<NSHEATH;s++){                 // each sheath = one rounded flute
+    const x0=s*bw;
+    const gr=g.createLinearGradient(x0,0,x0+bw,0);
+    gr.addColorStop(0.00,'#3a3a3a');           // deep groove at the overlap seam
+    gr.addColorStop(0.12,'#8f8f8f');
+    gr.addColorStop(0.50,'#efefef');           // ridge crown
+    gr.addColorStop(0.88,'#8f8f8f');
+    gr.addColorStop(1.00,'#3a3a3a');
+    g.fillStyle=gr; g.fillRect(x0,0,bw,h);
+  }
+  for(let i=0;i<420;i++){                       // fine longitudinal fibre grooves
+    const x=Math.random()*w;
+    g.strokeStyle=`rgba(${Math.random()<0.5?60:200},${Math.random()<0.5?60:200},${Math.random()<0.5?60:200},0.10)`;
+    g.lineWidth=0.6+Math.random()*1.3;
+    g.beginPath(); g.moveTo(x,0); g.lineTo(x+Math.random()*6-3,h); g.stroke();
+  }
+  const t=new THREE.CanvasTexture(c); t.wrapS=THREE.RepeatWrapping; t.anisotropy=8;
+  return t;
+}
+
+// Wind-torn slits along the veins — the signature banana-leaf look. Tear count
+// varies per leaf: older, lower, more weather-exposed leaves are shredded to the
+// midrib; fresh top leaves stay nearly whole.
+function leafTearAlpha(nTears){
+  const w=256, h=1024;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,w,h);
+  g.fillStyle='#000';
+  for(let i=0;i<nTears;i++){
+    const side = Math.random()<0.5 ? 0 : 1;          // tear from left or right margin
+    const x0 = side ? w-1 : 1;
+    const dir = side ? -1 : 1;
+    const y0 = Math.random()*h;
+    const deep = Math.random()<0.25 ? 0.9 : 0.6;     // a few splits run almost to the midrib
+    const len = (0.16+deep*Math.random()) * (w*0.5);
+    const dy  = (Math.random()-0.5)*0.25*len;        // slight angle toward tip
+    const hw  = 1.2 + Math.random()*3.0;
+    g.beginPath();
+    g.moveTo(x0, y0-hw);
+    g.lineTo(x0+dir*len, y0+dy);                      // taper to a point
+    g.lineTo(x0, y0+hw);
+    g.closePath(); g.fill();
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.wrapT=THREE.RepeatWrapping; t.wrapS=THREE.ClampToEdgeWrapping;
+  return t;
+}
+
+// Dwarf Cavendish young-leaf pigmentation overlay: irregular maroon/black
+// blotches and a reddish flush, blended over the green and faded out per-leaf as
+// the leaf matures (see uFleck). Base of the blade is the most heavily marked.
+function leafFleckTexture(){
+  const w=512, h=1024;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  g.clearRect(0,0,w,h);
+  // reddish flush concentrated near the midrib and base
+  const flush=g.createLinearGradient(0,0,0,h);
+  flush.addColorStop(0.0,'rgba(120,26,30,0.5)');   // base strongly flushed
+  flush.addColorStop(0.35,'rgba(120,30,34,0.16)');
+  flush.addColorStop(1.0,'rgba(120,34,40,0.0)');
+  g.fillStyle=flush; g.fillRect(0,0,w,h);
+  const mid=g.createLinearGradient(w*0.42,0,w*0.58,0);
+  mid.addColorStop(0,'rgba(110,22,28,0)'); mid.addColorStop(0.5,'rgba(120,24,26,0.4)'); mid.addColorStop(1,'rgba(110,22,28,0)');
+  g.fillStyle=mid; g.fillRect(w*0.42,0,w*0.16,h);
+  // scattered blotches: maroon and near-black, denser toward the base
+  for(let i=0;i<340;i++){
+    const v=Math.pow(Math.random(),0.7);            // small v = base-ish
+    const y=v*h;
+    const x=Math.random()*w;
+    const rad=3+Math.random()*15*(1-0.4*v);
+    const black=Math.random()<0.4;
+    const col=black ? `rgba(${20+Math.random()*16|0},${8+Math.random()*10|0},${12+Math.random()*10|0},`
+                    : `rgba(${96+Math.random()*40|0},${20+Math.random()*20|0},${26+Math.random()*20|0},`;
+    g.fillStyle=col+(0.20+Math.random()*0.5)+')';
+    g.beginPath();
+    const n=6+((Math.random()*4)|0);
+    for(let k=0;k<=n;k++){ const a=k/n*Math.PI*2, rr=rad*(0.55+Math.random()*0.7);
+      const px=x+Math.cos(a)*rr, py=y+Math.sin(a)*rr; k?g.lineTo(px,py):g.moveTo(px,py); }
+    g.closePath(); g.fill();
+  }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=8;
+  return t;
+}
+
+// Moist dark loam with mottling, small pebbles and organic litter.
+function soilTexture(){
+  const s=1024; const c=document.createElement('canvas'); c.width=c.height=s;
+  const g=c.getContext('2d');
+  g.fillStyle='#3b2b1d'; g.fillRect(0,0,s,s);            // dark loam base
+  for(let i=0;i<1400;i++){                                // damp mottled patches
+    const x=Math.random()*s,y=Math.random()*s,r=5+Math.random()*30, b=Math.random();
+    g.fillStyle=`rgba(${34+b*54|0},${24+b*40|0},${14+b*26|0},0.16)`;
+    g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  for(let i=0;i<420;i++){                                 // organic litter streaks
+    const x=Math.random()*s,y=Math.random()*s;
+    g.strokeStyle=`rgba(${86+Math.random()*44|0},${52+Math.random()*30|0},${24+Math.random()*18|0},0.45)`;
+    g.lineWidth=1+Math.random()*2.4; g.beginPath();
+    g.moveTo(x,y); g.lineTo(x+Math.random()*16-8,y+Math.random()*16-8); g.stroke();
+  }
+  for(let i=0;i<150;i++){                                 // little pebbles with a soft highlight
+    const x=Math.random()*s,y=Math.random()*s,r=2+Math.random()*5, gr=74+Math.random()*54|0;
+    g.fillStyle=`rgba(${gr},${gr-12},${gr-26},0.7)`;
+    g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+    g.fillStyle='rgba(210,205,190,0.10)';
+    g.beginPath(); g.arc(x-r*0.3,y-r*0.3,r*0.4,0,7); g.fill();
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.colorSpace=THREE.SRGBColorSpace; t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=8;
+  return t;
+}
+
+// Patchy tropical ground: mixed grass greens with bare-earth scuffs.
+function groundTexture(){
+  const s=1024; const c=document.createElement('canvas'); c.width=c.height=s;
+  const g=c.getContext('2d');
+  g.fillStyle='#69793f'; g.fillRect(0,0,s,s);
+  for(let i=0;i<2600;i++){                                // grassy mottle
+    const x=Math.random()*s,y=Math.random()*s,r=3+Math.random()*26, b=Math.random();
+    const green=`rgba(${70+b*60|0},${86+b*54|0},${40+b*40|0},0.14)`;
+    g.fillStyle=green; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  for(let i=0;i<70;i++){                                  // bare earth scuffs
+    const x=Math.random()*s,y=Math.random()*s,r=12+Math.random()*40;
+    g.fillStyle=`rgba(${96+Math.random()*30|0},${74+Math.random()*24|0},${44+Math.random()*20|0},0.10)`;
+    g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  for(let i=0;i<3000;i++){                                // fine grass-blade flecks
+    const x=Math.random()*s,y=Math.random()*s;
+    g.strokeStyle=`rgba(${60+Math.random()*70|0},${90+Math.random()*60|0},${44+Math.random()*40|0},0.3)`;
+    g.lineWidth=0.8+Math.random(); g.beginPath();
+    g.moveTo(x,y); g.lineTo(x+Math.random()*3-1.5,y-2-Math.random()*4); g.stroke();
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.colorSpace=THREE.SRGBColorSpace; t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=8;
+  return t;
+}
+
+const LEAF_MAP   = leafColorTexture();
+const LEAF_BUMP  = leafBumpTexture();
+const LEAF_FLECK = leafFleckTexture();
+const STEM_MAP   = stemTexture();
+const STEM_BUMP  = stemBumpTexture();
+const SOIL_MAP   = soilTexture();
+const GROUND_MAP = groundTexture(); GROUND_MAP.repeat.set(26,26);
+const NO_TEAR    = leafTearAlpha(0);              // a whole young leaf (no wind-slits) — the spear leaf
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(40, 96),
+  new THREE.MeshStandardMaterial({ map:GROUND_MAP, roughness:1.0, metalness:0 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ----------------------------------------------------------------------------
+// Pseudostem (tapered "trunk" of leaf sheaths)
+// ----------------------------------------------------------------------------
+// Base radius profile of the pseudostem at height v (0 base -> 1 top).
+function stemProfile(v){
+  let r = lerp(0.31, 0.09, Math.pow(v,0.85));          // taper to a slim crown ~ furled-leaf thick
+  r *= 1 + 0.16*Math.exp(-v*11);                       // flared corm base
+  r *= 1 + 0.05*Math.exp(-Math.pow((v-0.5)/0.34,2));   // faint mid-belly
+  r *= 1 - 0.12*smooth(clamp((v-0.88)/0.12,0,1));      // slight pinch-in right at the crown
+  return Math.max(0.03, r);
+}
+// A real pseudostem is a bundle of clasping leaf sheaths: NOT a surface of
+// revolution. Build a custom cylinder whose cross-section has soft longitudinal
+// flutes (sheath edges) that spiral slowly up, plus faint leaf-scar rings — so the
+// silhouette reads organic instead of a smooth lathe.
+function buildStem(){
+  const N=160, M=96, pos=[], uv=[], idx=[];
+  for(let i=0;i<=N;i++){
+    const v=i/N;
+    const r0=stemProfile(v);
+    const scar=0.012*Math.sin(v*Math.PI*13.0);          // gentle scar ringing up the stem
+    for(let j=0;j<=M;j++){
+      const a=j/M*Math.PI*2;
+      // overlapping sheath lobes: 5 broad + 9 fine, both drifting round as they rise
+      const flute = 0.032*Math.sin(5*a + v*3.2) + 0.015*Math.sin(9*a - v*2.1);
+      const rr = r0*(1 + flute) + scar*(0.55 + 0.45*Math.sin(3*a + v*4.0));
+      pos.push(Math.cos(a)*rr, v, Math.sin(a)*rr);
+      uv.push(j/M, v);
+    }
+  }
+  const st=M+1;
+  for(let i=0;i<N;i++) for(let j=0;j<M;j++){
+    const a=i*st+j, b=a+st;
+    idx.push(a,b,a+1, a+1,b,b+1);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute('uv',       new THREE.Float32BufferAttribute(uv,2));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  const mat=new THREE.MeshStandardMaterial({
+    map:STEM_MAP, bumpMap:STEM_BUMP, bumpScale:0.6,
+    roughness:0.55, metalness:0.0, envMapIntensity:0.95,  // waxy sheen off the sky/env
+    color:0xdfe7d0,
+  });
+  const m=new THREE.Mesh(geo, mat);
+  m.castShadow=true; m.receiveShadow=true;
+  return m;
+}
+
+// ----------------------------------------------------------------------------
+// Leaf geometry — two baked poses (rolled+upright "start", open+arched "end")
+// blended in the vertex shader by a per-leaf uGrow uniform.
+// ----------------------------------------------------------------------------
+const NU = 14, NV = 30;   // across / along subdivisions (higher-res, smoother blade)
+
+function halfWidth(v, len){
+  // narrow petiole near base -> broad oblong blade -> tapered soft point (drip tip)
+  const broad = Math.pow(Math.sin(Math.PI*clamp(v,0,1)), 0.42);
+  const ramp  = smooth(clamp((v-0.03)/0.14, 0, 1));           // narrow stalk at base
+  const tip   = Math.pow(smooth(clamp((1-v)/0.15, 0, 1)), 0.82); // taper to a pointed tip
+  return Math.max(0.006*len, broad*ramp*tip * 0.212 * len);
+}
+
+function spine(pose, len, archTip){
+  // returns array of {p:Vector3, t:Vector3}
+  const n=NV, pts=[];
+  let p=new THREE.Vector3(0,0,0); pts.push(p.clone());
+  const seg=len/n;
+  for(let i=1;i<=n;i++){
+    const v=i/n;
+    let thDeg;
+    if(pose==='end') thDeg = lerp(76, archTip, smooth(v));  // up, then arch over; archTip sets droop
+    else             thDeg = lerp(89, 82, v);            // near-vertical cigar
+    const th=thDeg*Math.PI/180;
+    p = p.clone().add(new THREE.Vector3(Math.cos(th)*seg, Math.sin(th)*seg, 0));
+    pts.push(p.clone());
+  }
+  const out=[];
+  for(let i=0;i<=n;i++){
+    const a=pts[Math.max(0,i-1)], b=pts[Math.min(n,i+1)];
+    out.push({ p:pts[i], t:b.clone().sub(a).normalize() });
+  }
+  return out;
+}
+
+function buildLeafPose(pose, len, archTip, keel){
+  const sp = spine(pose, pose==='end'?len:len*0.52, archTip);
+  const side = new THREE.Vector3(0,0,1);     // width direction
+  const pos = [];
+  for(let j=0;j<=NV;j++){
+    const v=j/NV;
+    const P=sp[j].p, T=sp[j].t;
+    const w=halfWidth(v,len);
+    for(let i=0;i<=NU;i++){
+      const u = (i/NU)*2-1;                  // -1..1 across
+      let x,y,z;
+      if(pose==='end'){
+        // the two lamina halves droop from a raised midrib (keel) and fold slightly
+        // inward — strongest mid-leaf, easing at base & tip; a shallow "V" channel
+        const chan = keel * (0.55 + 0.45*Math.sin(Math.PI*clamp(v,0,1)));
+        x = P.x;
+        y = P.y - chan*w*Math.pow(Math.abs(u),1.55);
+        z = u*w*(1 - 0.14*Math.abs(u));                 // gentle inward fold of the edges
+      } else {
+        // roll the strip into a tight cigar around the spine
+        const e2 = new THREE.Vector3().crossVectors(T, side).normalize(); // ~radial
+        const phi = u*Math.PI*1.12;
+        const r = 0.045*len*(0.5+0.5*Math.sin(Math.PI*Math.pow(v,0.82)));
+        x = P.x + e2.x*Math.cos(phi)*r;
+        y = P.y + e2.y*Math.cos(phi)*r;
+        z = side.z*Math.sin(phi)*r;
+      }
+      pos.push(x,y,z);
+    }
+  }
+  // normals
+  const idx=[];
+  const stride=NU+1;
+  for(let j=0;j<NV;j++) for(let i=0;i<NU;i++){
+    const a=j*stride+i, b=a+1, c=a+stride, d=c+1;
+    idx.push(a,c,b, b,c,d);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return { pos:new Float32Array(pos), nrm:g.attributes.normal.array.slice(), idx };
+}
+
+function buildLeafGeometry(len, archTip, keel){
+  const start=buildLeafPose('start', len, archTip, keel);
+  const end  =buildLeafPose('end',   len, archTip, keel);
+  const uv=[];
+  for(let j=0;j<=NV;j++) for(let i=0;i<=NU;i++) uv.push(i/NU, j/NV);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(start.pos,3));
+  g.setAttribute('normal',   new THREE.Float32BufferAttribute(start.nrm,3));
+  g.setAttribute('uv',       new THREE.Float32BufferAttribute(uv,2));
+  g.setAttribute('aPosEnd',  new THREE.Float32BufferAttribute(end.pos,3));
+  g.setAttribute('aNrmEnd',  new THREE.Float32BufferAttribute(end.nrm,3));
+  g.setIndex(start.idx);
+  return g;
+}
+
+// The petiole: the thick, channeled leaf-STALK that clasps the pseudostem where the
+// leaf comes out (see reference photos). A real banana leaf does not sprout from a
+// point — it joins the stem through a fat green stalk that widens into a sheath. We
+// build a tapered rounded stalk that follows the first third of the leaf's open
+// spine, so it sits under the blade base and reads as a real connection.
+function buildPetiole(len, archTip){
+  const sp=spine('end', len, archTip);
+  const side=new THREE.Vector3(0,0,1);
+  const vmax=0.34, SEG=9, RAD=10, sc=len/3.0;
+  const pos=[], idx=[];
+  const _n=new THREE.Vector3(), _o=new THREE.Vector3();
+  for(let s=0;s<=SEG;s++){
+    const v=(s/SEG)*vmax;
+    const fj=v*NV, j0=Math.min(NV-1,Math.floor(fj)), fr=fj-j0;
+    const P=sp[j0].p.clone().lerp(sp[j0+1].p, fr);
+    const T=sp[j0].t.clone().lerp(sp[j0+1].t, fr).normalize();
+    _n.crossVectors(T, side).normalize();               // up-ish normal, in the leaf's plane
+    const rw=lerp(0.075,0.028, v/vmax)*sc;              // half-width across (thick base -> slim)
+    const rh=lerp(0.052,0.022, v/vmax)*sc;              // half-height (rounded underside)
+    for(let j=0;j<=RAD;j++){
+      const a=j/RAD*Math.PI*2, cx=Math.cos(a), cy=Math.sin(a);
+      _o.copy(side).multiplyScalar(cx*rw).addScaledVector(_n, cy*rh);
+      pos.push(P.x+_o.x, P.y+_o.y, P.z+_o.z);
+    }
+  }
+  for(let s=0;s<SEG;s++)for(let j=0;j<RAD;j++){
+    const a=s*(RAD+1)+j, b=a+RAD+1;
+    idx.push(a,b,b+1, a,b+1,a+1);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+
+const uTime = { value:0 };
+const uSunDir = { value:new THREE.Vector3(-0.5,-0.75,-0.37) };  // sun travel dir, view space (updated per frame)
+
+function makeLeafMaterial(tint, phase, len, tearTex, sheen){
+  const mat=new THREE.MeshStandardMaterial({
+    map:LEAF_MAP, bumpMap:LEAF_BUMP, bumpScale:0.03,
+    alphaMap:tearTex, alphaTest:0.5,
+    color:tint, side:THREE.DoubleSide,
+    roughness:0.42, metalness:0.0, envMapIntensity:0.85+sheen,
+    emissive:new THREE.Color(0x244a18), emissiveIntensity:0.34,
+  });
+  const u = { uGrow:{value:0}, uPhase:{value:phase}, uLen:{value:len}, uFleck:{value:0}, uDead:{value:0} };
+  mat.userData.u = u;
+  mat.onBeforeCompile = (sh)=>{
+    sh.uniforms.uGrow  = u.uGrow;
+    sh.uniforms.uPhase = u.uPhase;
+    sh.uniforms.uLen   = u.uLen;
+    sh.uniforms.uFleck = u.uFleck;
+    sh.uniforms.uDead  = u.uDead;
+    sh.uniforms.uTime  = uTime;
+    sh.uniforms.uFleckMap = { value:LEAF_FLECK };
+    sh.vertexShader =
+      'attribute vec3 aPosEnd;\nattribute vec3 aNrmEnd;\n'+
+      'uniform float uGrow;\nuniform float uPhase;\nuniform float uLen;\nuniform float uTime;\n'+
+      sh.vertexShader;
+    sh.vertexShader = sh.vertexShader.replace(
+      '#include <beginnormal_vertex>',
+      'vec3 objectNormal = normalize( mix( normal, aNrmEnd, uGrow ) );\n'+
+      '#ifdef USE_TANGENT\n vec3 objectTangent = vec3( tangent.xyz );\n#endif'
+    );
+    sh.vertexShader = sh.vertexShader.replace(
+      '#include <begin_vertex>',
+      'vec3 transformed = mix( position, aPosEnd, uGrow );\n'+
+      'float gust = 0.62 + 0.38*sin( uTime*0.23 + uPhase*0.5 );\n'+          // slow gust envelope
+      'float edge = abs(uv.x - 0.5) * 2.0;\n'+                                // 0 at midrib -> 1 at margins
+      'float sway = sin( uTime*1.2 + uPhase + transformed.y*0.6 ) * 0.03 * uLen * uv.y * gust;\n'+
+      'float flutter = sin( uTime*5.6 + uPhase*2.0 + transformed.y*3.2 ) * 0.009 * uLen * edge * uv.y * gust;\n'+
+      'transformed.z += sway + flutter;\n transformed.x += sway*0.35;\n'
+    );
+    sh.uniforms.uSunDir = uSunDir;
+    // Dwarf Cavendish flecking: blend the maroon/black overlay over the leaf albedo,
+    // scaled by uFleck (fades from ~1 on a just-unfurled leaf to 0 as it matures).
+    sh.fragmentShader =
+      'uniform float uFleck;\nuniform float uDead;\nuniform sampler2D uFleckMap;\nuniform vec3 uSunDir;\n'+ sh.fragmentShader;
+    sh.fragmentShader = sh.fragmentShader.replace(
+      '#include <map_fragment>',
+      '#include <map_fragment>\n'+
+      'vec4 fk = texture2D( uFleckMap, vMapUv );\n'+
+      'diffuseColor.rgb = mix( diffuseColor.rgb, fk.rgb, clamp(fk.a*uFleck,0.0,1.0) );\n'+
+      // dying leaf: real banana leaves brown from the MARGINS and TIP inward, going
+      // green -> chlorotic yellow -> dry brown, with darker necrotic blotches.
+      'float dprog = clamp(uDead*1.12, 0.0, 1.0);\n'+
+      'float edge = smoothstep(0.30,0.5,abs(vMapUv.x-0.5)) + smoothstep(0.55,1.0,vMapUv.y);\n'+
+      'float front = clamp(dprog*1.5 - (1.0 - clamp(edge,0.0,1.0))*0.6, 0.0, 1.0);\n'+
+      'float necro = 0.5 + 0.5*sin(vMapUv.x*48.0+1.3)*sin(vMapUv.y*30.0);\n'+
+      'vec3 dryC = mix( vec3(0.63,0.51,0.15), vec3(0.34,0.22,0.10), smoothstep(0.15,0.85,dprog) );\n'+
+      'dryC *= 1.0 - 0.32*smoothstep(0.6,0.95,necro)*dprog;\n'+     // necrotic dark patches
+      'diffuseColor.rgb = mix( diffuseColor.rgb, dryC, clamp(front,0.0,0.9) );\n'
+    );
+    // Backlit translucency: when the sun is behind the blade (relative to the eye)
+    // it glows warm-green through the thin lamina — the signature banana look.
+    sh.fragmentShader = sh.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n'+
+      'float bl = clamp( dot( normalize(vViewPosition), uSunDir ), 0.0, 1.0 );\n'+
+      'float trans = pow( bl, 2.1 );\n'+                    // broader, softer glow lobe
+      'float veins = 0.85 + 0.15*sin( vMapUv.x*160.0 );\n'+ // faint lateral-vein banding shows through
+      'totalEmissiveRadiance += trans * vec3(0.30,0.58,0.14) * diffuseColor.rgb * 2.7 * veins;\n'+
+      'totalEmissiveRadiance += pow(bl,5.0) * vec3(0.9,0.85,0.5) * 0.35;\n' // hot rim where the sun is directly behind
+    );
+  };
+  return mat;
+}
+
+// ----------------------------------------------------------------------------
+// Inflorescence — the banana "bell". The rachis hangs from the throat and keeps
+// extending downward. As its tip passes each node a bract lifts and reveals a
+// hand of fruit: fingers start tiny + green with a flower on the tip, the flower
+// drops, the fingers swell, curl up and ripen green -> yellow. The bell rides
+// the growing tip, opening male flowers near the bottom.
+// ----------------------------------------------------------------------------
+const INFLOR = { nHands:6, dropU:2.2 };
+const FRUIT_GREEN = new THREE.Color(0x4c8a2c);
+const FRUIT_RIPE  = new THREE.Color(0xedbe22);
+
+// one curved "finger" (banana): base at origin, curving out (+X) and up (+Y)
+const FINGER_CURVE = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0.00,0.00,0), new THREE.Vector3(0.12,0.015,0),
+  new THREE.Vector3(0.22,0.07,0), new THREE.Vector3(0.31,0.17,0),
+  new THREE.Vector3(0.37,0.30,0),
+]);
+// lofted tube with a banana radius profile: slim peduncle neck, fat belly, blunt
+// tip; the cross-section is pentagonal (real bananas have ~5 longitudinal facets).
+function buildFingerGeometry(){
+  const SEG=26, RAD=16, pos=[], nrm=[], idx=[];
+  const fr=FINGER_CURVE.computeFrenetFrames(SEG,false);
+  for(let i=0;i<=SEG;i++){
+    const v=i/SEG, p=FINGER_CURVE.getPoint(v), N=fr.normals[i], B=fr.binormals[i];
+    // thin neck at the stalk, swelling belly ~40%, tapering to a small blunt point
+    let r=0.058*Math.pow(Math.sin(Math.PI*Math.min(0.995,0.05+0.92*v)),0.5);
+    r*=(1-0.26*smooth(v));                              // fuller body, gentle taper toward the tip
+    r*=(0.62+0.38*smooth(clamp(v/0.14,0,1)));           // pinch in at the very base (peduncle)
+    for(let j=0;j<=RAD;j++){
+      const a=j/RAD*Math.PI*2;
+      const facet=1+0.05*Math.cos(5*a)+0.012*Math.cos(10*a); // pentagonal cross-section
+      const rr=r*facet;
+      const dx=Math.cos(a), dy=Math.sin(a);
+      const nx=N.x*dx+B.x*dy, ny=N.y*dx+B.y*dy, nz=N.z*dx+B.z*dy;
+      pos.push(p.x+nx*rr, p.y+ny*rr, p.z+nz*rr); nrm.push(nx,ny,nz);
+    }
+  }
+  for(let i=0;i<SEG;i++) for(let j=0;j<RAD;j++){
+    const a=i*(RAD+1)+j, b=a+RAD+1;
+    idx.push(a,b,b+1, a,b+1,a+1);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+const FINGER_GEO = buildFingerGeometry();
+const FINGER_TIP = FINGER_CURVE.getPoint(1);
+const NUB_GEO    = new THREE.ConeGeometry(0.016, 0.05, 8);   // dried blossom remnant at the tip
+// a broad, cupped, pointed bract petal along +Y (base at origin, tip at +Y),
+// cupped toward +Z with a recurved tip — higher-res for smooth silhouettes.
+function buildBractGeometry(){
+  const NUb=12, NVb=20, L=0.54, W=0.205, CUP=0.155, pos=[], idx=[];
+  for(let j=0;j<=NVb;j++){
+    const v=j/NVb;
+    const hw=W*Math.pow(Math.sin(Math.PI*Math.min(0.997,0.02+0.98*v)),0.5)*(1-0.42*v); // wide base -> point
+    const cup=CUP*(0.28+0.72*(1-v));                        // boat-shaped cup, fading to the tip
+    const recurve=-0.12*smooth(clamp((v-0.68)/0.32,0,1));   // pointed tip curls back out
+    for(let i=0;i<=NUb;i++){ const u=(i/NUb)*2-1; pos.push(u*hw, L*v, cup*(1-u*u)+recurve); }
+  }
+  const st=NUb+1;
+  for(let j=0;j<NVb;j++)for(let i=0;i<NUb;i++){ const a=j*st+i,c=a+st; idx.push(a,c,a+1,a+1,c,c+1); }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+const BRACT_GEO  = buildBractGeometry();
+
+// smooth teardrop bud that hangs from y=0 down to a point at -0.66 (lathe of revolution)
+function buildBellCoreGeometry(){
+  const P=[
+    [0.050,0.00],[0.105,-0.02],[0.140,-0.07],[0.152,-0.15],[0.150,-0.24],
+    [0.140,-0.34],[0.123,-0.44],[0.100,-0.53],[0.068,-0.60],[0.032,-0.645],[0.0,-0.66],
+  ].map(p=>new THREE.Vector2(p[0],p[1]));
+  return new THREE.LatheGeometry(P, 40);
+}
+// one tubular cream male flower (a little curved capsule), grouped into a comb per bract
+const MALEFLOWER_GEO = (()=>{
+  const g=new THREE.CylinderGeometry(0.012,0.016,0.075,10,1,false);
+  g.translate(0,0.037,0); g.rotateZ(Math.PI*0.5); return g;   // lie along +X, base at origin
+})();
+
+function buildBell(){
+  const g=new THREE.Group();
+  const outer=new THREE.MeshStandardMaterial({ color:0x6a1a33, roughness:0.42, metalness:0.0, envMapIntensity:0.9, side:THREE.DoubleSide });
+  // deep purple-maroon outside, bright waxy crimson on the INNER face that shows as
+  // the bracts reflex back. clone() carries this onBeforeCompile to every bract.
+  outer.onBeforeCompile=(sh)=>{
+    sh.fragmentShader=sh.fragmentShader.replace(
+      '#include <color_fragment>',
+      '#include <color_fragment>\n'+
+      'if(!gl_FrontFacing){ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86,0.32,0.36), 0.62); }\n');
+  };
+  const mmat =new THREE.MeshStandardMaterial({ color:0xf3e6bc, roughness:0.5, envMapIntensity:0.9 });
+
+  // inner pointed bud (teardrop spindle), hanging tip-down
+  const core=new THREE.Mesh(buildBellCoreGeometry(), outer.clone());
+  core.material.color.setHex(0x7a1f38);
+  core.castShadow=true; g.add(core);
+
+  const nb=12, bracts=[];
+  for(let i=0;i<nb;i++){
+    const pivot=new THREE.Group(); pivot.rotation.y=i*2.399;      // golden-angle spiral of bracts
+    const hinge=new THREE.Group(); hinge.position.set(0,0.0,0);   // hinges at the bud rim
+    const br=new THREE.Mesh(BRACT_GEO, outer.clone());
+    br.material.color.offsetHSL(0,0.03*(i%3-1),0.025*(i%2?1:-1)); // subtle purple variation
+    br.position.set(0.055,0,0); br.rotation.set(Math.PI*0.98,0,0);// point the pointed bract DOWN over the bud
+    br.castShadow=true; hinge.add(br);
+    const mf=new THREE.Group();                                   // comb of tubular cream male flowers
+    for(let k=0;k<7;k++){
+      const f=new THREE.Mesh(MALEFLOWER_GEO, mmat);
+      f.position.set(0.085,-0.015,(k-3)*0.028);
+      f.rotation.z=-0.15; mf.add(f);
+    }
+    mf.visible=false;
+    pivot.add(hinge); pivot.add(mf); g.add(pivot);
+    bracts.push({ hinge, br, mf, turn:0.12 + i/nb*0.82 });        // staggered peel time in fp
+  }
+
+  function update(fp){
+    for(const b of bracts){
+      const local=fp - b.turn;
+      const lift=smooth(clamp(local/0.06,0,1));          // bract reflexes outward and up
+      const drop=smooth(clamp((local-0.28)/0.10,0,1));   // then peels fully back and drops off
+      b.hinge.rotation.z=lift*1.7 + drop*1.5;
+      b.br.visible = drop<0.97;
+      b.mf.visible = lift>0.25;
+      b.mf.scale.setScalar(Math.max(0.001, lift));
+    }
+  }
+  return { group:g, update, bracts };
+}
+
+function buildHand(){
+  const group=new THREE.Group();
+  const fingerMat=new THREE.MeshStandardMaterial({ color:FRUIT_GREEN.clone(), roughness:0.5, envMapIntensity:0.75, side:THREE.DoubleSide });
+  // ripening "sugar spots": sparse brown freckles that emerge on the peel as the
+  // fruit turns yellow (uRipe 0..1), placed by a stable object-space hash.
+  const uRipe={ value:0 };
+  fingerMat.userData.uRipe=uRipe;
+  fingerMat.onBeforeCompile=(sh)=>{
+    sh.uniforms.uRipe=uRipe;
+    sh.vertexShader='varying vec3 vObjPos;\n'+sh.vertexShader.replace(
+      '#include <begin_vertex>', '#include <begin_vertex>\n vObjPos = position;\n');
+    sh.fragmentShader='varying vec3 vObjPos;\nuniform float uRipe;\n'+sh.fragmentShader.replace(
+      '#include <color_fragment>',
+      '#include <color_fragment>\n'+
+      'vec3 cell = floor(vObjPos*115.0);\n'+
+      'float sp = fract(sin(dot(cell, vec3(12.99,78.23,37.71)))*43758.545);\n'+
+      'float freck = smoothstep(0.93,0.965,sp) * smoothstep(0.4,0.75,uRipe);\n'+
+      'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.24,0.14,0.05), freck*0.9);\n');
+  };
+  const nubMat=new THREE.MeshStandardMaterial({ color:0x241d14, roughness:0.85 });
+  const fingers=[]; const rows=2, per=9;
+  for(let r=0;r<rows;r++) for(let k=0;k<per;k++){
+    const frac=k/(per-1);
+    const dir=new THREE.Group();                        // azimuth around the rachis (tight comb)
+    dir.rotation.y=(-1.02 + 2.04*frac) + (r?0.12:0);
+    const tilt=new THREE.Group();                        // pitch up as it matures; also carries growth scale
+    tilt.position.set(0.03,-0.015 - r*0.082,0);
+    const f=new THREE.Mesh(FINGER_GEO, fingerMat);
+    const nub=new THREE.Mesh(NUB_GEO, nubMat);
+    nub.position.copy(FINGER_TIP); nub.rotation.z=-0.5; f.add(nub);
+    tilt.add(f); dir.add(tilt); group.add(dir);
+    fingers.push({ tilt, nub, sizeVar:0.86+Math.random()*0.24,
+                   baseZ:(r?0.06:-0.02)+Math.sin(k*2.1)*0.03 });
+  }
+  function update(hp, decay){
+    const grow=lerp(0.12,1.0,smooth(hp));
+    const ripe=smooth(clamp((hp-0.5)/0.45,0,1));        // green -> yellow ripening progress
+    const plump=1+0.14*ripe;                            // fingers visibly swell as they ripen
+    const pitch=lerp(-0.25,1.05,smooth(hp));            // young point down/out -> mature curl strongly up
+    const fall=1-smooth(clamp((hp-0.16)/0.22,0,1));     // flower on the tip drops off early
+    for(const fg of fingers){
+      fg.tilt.scale.setScalar(grow*fg.sizeVar*plump);
+      fg.tilt.rotation.z=pitch+fg.baseZ;
+      fg.nub.scale.setScalar(Math.max(0.001,fall));
+    }
+    // ripen green -> yellow; then over-ripen toward dull brown as the plant dies
+    fingerMat.color.copy(FRUIT_GREEN).lerp(FRUIT_RIPE, ripe);
+    if(decay>0) fingerMat.color.lerp(_c2.setHex(0x6b4a20), 0.75*decay);
+    fingerMat.userData.uRipe.value = Math.min(1, ripe + decay*0.6);  // freckles multiply too
+  }
+  return { group, update };
+}
+
+function buildInflorescence(pr){
+  const group=new THREE.Group();
+  const L=pr.dropU;                                     // pendant length varies per plant
+  const curve=new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.00, 0.00,0), new THREE.Vector3(0.10, 0.24,0),
+    new THREE.Vector3(0.34, 0.30,0), new THREE.Vector3(0.52, 0.10,0),
+    new THREE.Vector3(0.56,-0.18*L,0), new THREE.Vector3(0.57,-0.45*L,0),
+    new THREE.Vector3(0.57,-0.73*L,0), new THREE.Vector3(0.57,-1.00*L,0),
+  ]);
+  const T=150, R=10;
+  const tubeGeo=new THREE.TubeGeometry(curve, T, 0.05, R, false);
+  const rachis=new THREE.Mesh(tubeGeo, new THREE.MeshStandardMaterial({ color:0x6a2436, roughness:0.5, envMapIntensity:0.8 }));
+  rachis.castShadow=true; group.add(rachis);
+  const idxPerSeg=R*6;
+
+  const bell=buildBell(); group.add(bell.group);
+
+  const hands=[];
+  for(let j=0;j<INFLOR.nHands;j++){
+    const uj=0.47 + j/(INFLOR.nHands-1)*0.32;           // hands hang along the pendant rachis (below the arch)
+    const h=buildHand(); h.group.visible=false; h.group.rotation.y=j*2.39;  // ~137° spiral
+    group.add(h.group);
+    hands.push({ uj, ...h });
+  }
+
+  function tipAt(fp){ const rv=clamp(smooth(fp),0,1); const segs=Math.max(1,Math.floor(rv*T)); return curve.getPoint(segs/T); }
+
+  // One detached petal per bract: when its bract has peeled fully back it lets go,
+  // flutters down and comes to rest ON the soil mound. Petals live in a WORLD-space
+  // group (not inside the plant), so when the spent stem later topples and rots the
+  // petals stay put on the ground and simply rot into the soil with it.
+  const petalGroup=new THREE.Group();
+  const petals=[];
+  for(const b of bell.bracts){
+    const releaseFp=b.turn+0.38;
+    if(releaseFp > 0.99) continue;                      // late bracts never fully peel — no petal drops
+    const org=tipAt(releaseFp).clone();                 // crown-local point where the bell let go
+    const tRel=CFG.flowerStart + releaseFp*(1-CFG.flowerStart);
+    const crownYRel=stemTopAt(tRel, pr.stemHeight);     // how high the crown was at that moment
+    const az=b.turn*6.283 + rnd(-0.4,0.4);              // scatter direction on the ground
+    const pm=new THREE.Mesh(BRACT_GEO, b.br.material);
+    pm.castShadow=true; pm.visible=false; petalGroup.add(pm);
+    petals.push({ pm, releaseFp, org, crownYRel, wOrg:null, dX:0, dZ:0,
+      azL:az, seed:Math.random(), sx:rnd(3,7), sy:rnd(-4,4), sz:rnd(3,7),
+      baseYaw:rnd(0,6.28), landTilt:rnd(-0.5,0.5) });
+  }
+
+  const api={ group, petalGroup, tipY:0.3, wx:0, wz:0, wyaw:0 };
+  api.update=function(fp, rotPhase, senPhase){
+    const rv=clamp(smooth(fp),0,1);
+    const segs=Math.max(1,Math.floor(rv*T));
+    tubeGeo.setDrawRange(0, segs*idxPerSeg);            // rachis grows downward by revealing itself
+    const uEnd=segs/T;
+    const tip=curve.getPoint(uEnd); api.tipY=tip.y;
+    bell.group.position.copy(tip);                      // bell rides the growing tip
+    // emerges as a small tight bud and swells as it descends on the peduncle
+    bell.group.scale.setScalar(lerp(0.05, 1.0, smooth(clamp(fp/0.34,0,1))));
+    // it first pokes UP out of the crown, then — as the peduncle lengthens — gravity
+    // slowly arcs it over until the bud hangs straight down: barely tips at first,
+    // then swings down faster (much more gradual than before).
+    const droopP = clamp((fp-0.05)/0.5, 0, 1);
+    const up = 1 - Math.pow(droopP, 1.6);
+    bell.group.rotation.z = up * Math.PI;
+    bell.update(fp);                                    // bracts peel one at a time
+    for(const h of hands){
+      const on=uEnd>=h.uj; h.group.visible=on;
+      if(!on) continue;
+      h.group.position.copy(curve.getPoint(h.uj));
+      h.update(clamp((rv-h.uj)/0.42,0,1), senPhase||0);   // fruit over-ripens as the plant dies
+    }
+    // fallen petals: accelerate down under gravity, flutter, settle on the mound
+    const cw=Math.cos(api.wyaw), sw=Math.sin(api.wyaw);
+    for(const p of petals){
+      const fall=fp-p.releaseFp;
+      if(fall<=0){ p.pm.visible=false; continue; }
+      if(!p.wOrg){                                      // freeze the release point in WORLD space
+        p.wOrg=new THREE.Vector3(
+          api.wx + p.org.x*cw + p.org.z*sw,
+          p.crownYRel + p.org.y,
+          api.wz - p.org.x*sw + p.org.z*cw);
+        p.dX=Math.cos(p.azL)*cw + Math.sin(p.azL)*sw;   // scatter dir, world frame
+        p.dZ=-Math.cos(p.azL)*sw + Math.sin(p.azL)*cw;
+      }
+      p.pm.visible=true;
+      const s=clamp(fall/0.16, 0, 1);                   // 0 just released -> 1 landed & resting
+      const air=1-s;
+      const flut=Math.sin(fall*16 + p.seed*6.28)*0.14*air;
+      const drift=0.12 + 0.55*s;
+      const px=p.wOrg.x + p.dX*drift + flut;
+      const pz=p.wOrg.z + p.dZ*drift + flut*0.6;
+      const gy=moundH(Math.hypot(px,pz)) + 0.02;        // rest on the mound surface
+      p.pm.position.set(px,
+                        lerp(p.wOrg.y, gy, s*s) - 0.9*rotPhase*rotPhase,  // sink into the soil as the plant rots
+                        pz);
+      p.pm.rotation.set(p.sx*fall*air + s*(Math.PI*0.5 + p.landTilt),  // tumble -> lie flat
+                        p.baseYaw + p.sy*fall*air,
+                        p.sz*fall*air*0.6 + s*p.landTilt*0.5);
+    }
+    group.rotation.z=0.025*Math.sin(uTime.value*0.7)*pr.swayAmt;   // gentle sway of the whole bunch
+    group.rotation.x=0.015*Math.sin(uTime.value*0.5+1.3)*pr.swayAmt;
+  };
+  return api;
+}
+
+// ----------------------------------------------------------------------------
+// Soil mound (irregular, displaced) + scattered clods + a banana sucker (pup)
+// ----------------------------------------------------------------------------
+// Approximate height of the soil mound surface at horizontal distance r from the
+// clump centre (matches the displaced, squashed sphere below). Used so petals and
+// dead leaves come to rest ON the mound instead of slicing through it.
+function moundH(r){
+  const R=1.27;
+  if(r>=R) return 0.015;
+  return 0.015 + 0.345*Math.pow(1-(r/R)*(r/R), 0.62);
+}
+
+function buildSoil(){
+  const geo=new THREE.SphereGeometry(1.2, 120, 60);
+  const p=geo.attributes.position, v=new THREE.Vector3();
+  for(let i=0;i<p.count;i++){
+    v.fromBufferAttribute(p,i);
+    const n = 0.07*Math.sin(v.x*5.0+v.z*4.3)
+            + 0.045*Math.sin(v.x*9.7-v.z*8.1+1.3)
+            + 0.028*Math.sin(v.x*17.0+v.z*15.0+2.1)
+            + 0.02*Math.sin(v.x*31.0-v.z*27.0);
+    v.multiplyScalar(1+n); p.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  const m=new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map:SOIL_MAP, bumpMap:SOIL_MAP, bumpScale:0.04, roughness:0.97, metalness:0 }));
+  SOIL_MAP.repeat.set(2,2);
+  m.scale.set(1.06,0.34,1.06); m.position.y=0.0;
+  m.castShadow=true; m.receiveShadow=true;
+  const g=new THREE.Group(); g.add(m);
+  // a few clods/pebbles round the base
+  const clodMat=new THREE.MeshStandardMaterial({ map:SOIL_MAP, roughness:0.95 });
+  for(let i=0;i<9;i++){
+    const a=Math.random()*7, rad=0.55+Math.random()*0.6;
+    const cl=new THREE.Mesh(new THREE.IcosahedronGeometry(0.03+Math.random()*0.05,0), clodMat);
+    cl.position.set(Math.cos(a)*rad, 0.03+Math.random()*0.02, Math.sin(a)*rad);
+    cl.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
+    cl.castShadow=true; cl.receiveShadow=true; g.add(cl);
+  }
+  g.add(buildGrass());                                 // grassy fringe around the mound
+  return g;
+}
+
+// A fringe of grass blades ringing the soil mound — one merged mesh of thin
+// tapered triangles, so it is cheap (a single draw call).
+function buildGrass(){
+  const pos=[], col=[], idx=[]; let vi=0;
+  const base=new THREE.Color(), c=new THREE.Color();
+  for(let i=0;i<230;i++){
+    const a=Math.random()*6.283, rad=0.42 + Math.random()*1.4;
+    const cx=Math.cos(a)*rad, cz=Math.sin(a)*rad;
+    const dir=Math.random()*6.283, px=-Math.sin(dir), pz=Math.cos(dir);
+    const w=0.014+Math.random()*0.012, hgt=0.10+Math.random()*0.20;
+    const bx=Math.cos(dir)*(Math.random()-0.5)*0.10, bz=Math.sin(dir)*(Math.random()-0.5)*0.10;
+    // one tapered blade = 1 triangle (base edge -> bent tip)
+    pos.push(cx-px*w, 0, cz-pz*w,  cx+px*w, 0, cz+pz*w,  cx+bx, hgt, cz+bz);
+    base.setHSL(0.23+Math.random()*0.06, 0.45+Math.random()*0.2, 0.34+Math.random()*0.12);
+    for(let k=0;k<3;k++){ c.copy(base); if(k===2) c.offsetHSL(0.01,0,0.08); col.push(c.r,c.g,c.b); }
+    idx.push(vi,vi+1,vi+2); vi+=3;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute('color',    new THREE.Float32BufferAttribute(col,3));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  const m=new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    vertexColors:true, roughness:0.8, side:THREE.DoubleSide }));
+  m.castShadow=true; m.receiveShadow=true;
+  return m;
+}
+
+// (suckers/pups are now real plants spawned by the mat driver — see spawnFollower)
+
+// The crown throat. A real pseudostem is NOT a hollow tube: its top is a solid
+// packed core of clasping leaf-sheaths, with the youngest leaf rolled into a tight
+// central spear. Fill the mouth with a low dome so it never reads as an empty
+// cylinder from above, and stand a furled spear in the centre — which then gives
+// way to the inflorescence once the plant flowers.
+function buildCrownFill(){
+  const g=new THREE.Group();
+  const FRESH=new THREE.Color(0x86a24a);
+  // a small matte dome closes the very top of the tube so the crown is never a hollow
+  // ring; it sits low and is mostly hidden by the leaf bases and the spear above it
+  const plug=new THREE.Mesh(
+    new THREE.SphereGeometry(0.085, 18, 10, 0, Math.PI*2, 0, Math.PI*0.5),
+    new THREE.MeshStandardMaterial({ color:FRESH.clone(), roughness:0.78, metalness:0, envMapIntensity:0.7 }));
+  plug.scale.y=0.34; plug.position.y=-0.03; plug.castShadow=true; plug.receiveShadow=true; g.add(plug);
+
+  // The newest leaf: a slender, pale-green, tightly ROLLED spear that stands upright,
+  // then slowly unrolls and opens and fades into the canopy as the next one begins —
+  // the real banana "cigar leaf". It is GREEN (maroon-flecked when young), never a
+  // pink spike: it reuses the real leaf geometry at a low unfurl value.
+  const spear=new THREE.Group(); spear.rotation.y=rnd(0,6.28); g.add(spear);
+  const tint=new THREE.Color().setHSL(0.27, 0.52, 0.48);
+  const smat=makeLeafMaterial(tint, 4.2, 1.7, NO_TEAR, 0.10);
+  const smesh=new THREE.Mesh(buildLeafGeometry(1.7, 66, 0.15), smat);
+  smesh.castShadow=true; spear.add(smesh);
+  const phase=rnd(0,24);
+
+  g.userData.update=function(fp, sen, tv){
+    // present only while vegetative — gone once the flower emerges or the plant dies
+    const alive=(1-smooth(clamp(fp/0.10,0,1)))*(1-smooth(clamp(sen*1.5,0,1)));
+    const cp=((((tv||0)+phase)/9.5)%1+1)%1;             // slow emergence cycle
+    const fin=smooth(clamp(cp/0.22,0,1));               // rises rolled
+    const fout=1-smooth(clamp((cp-0.72)/0.28,0,1));     // then opens & fades into the canopy
+    const sc=fin*fout*alive;
+    spear.visible=sc>0.02;
+    spear.scale.setScalar(Math.max(0.001, sc));
+    smat.userData.u.uGrow.value=clamp(0.03+0.72*smooth(cp),0,0.8);   // rolled -> unfurling
+    smat.userData.u.uFleck.value=0.8;                   // strong juvenile maroon flecking
+    smat.userData.u.uDead.value=0;
+    plug.material.color.copy(FRESH).lerp(DEAD_STEM, smooth(sen||0));
+  };
+  return g;
+}
+
+// ----------------------------------------------------------------------------
+// A banana "mat": an endless clump. makePlant(pr) builds one individual into its
+// own group from its own params. The mat driver (below) keeps several at staggered
+// ages — each grows, flowers, fruits, then senesces (all leaves die, the stem
+// browns and leans) and is removed, while the followers it sired take over. So the
+// clump renews itself forever, the way a real banana corm suckers and succeeds
+// the spent bearing stem.
+// ----------------------------------------------------------------------------
+const matGroup = new THREE.Group();
+scene.add(matGroup);
+scene.add(buildSoil());                    // terrain
+
+// geometries shared by every plant — never dispose these on teardown
+const SHARED_GEO = new Set([FINGER_GEO, NUB_GEO, MALEFLOWER_GEO, BRACT_GEO]);
+function disposePlantObj(pl){
+  pl.group.traverse(o=>{
+    if(!o.isMesh) return;
+    if(o.geometry && !SHARED_GEO.has(o.geometry)) o.geometry.dispose();
+    const m=o.material;
+    if(m){ if(m.alphaMap && m.alphaMap.__perLeaf) m.alphaMap.dispose(); m.dispose(); }
+  });
+  matGroup.remove(pl.group);
+  matGroup.remove(pl.inflor.petalGroup);   // petals live in world space (geometry+materials shared, already disposed)
+}
+
+function makePlant(pr){
+  const group  = new THREE.Group();
+  const stem   = buildStem(); group.add(stem);
+  // Foliage: each leaf attaches at the FIXED height where it was born, and the
+  // stem top keeps rising above it — so leaves end up spread up the whole trunk.
+  const foliage= new THREE.Group(); group.add(foliage);
+  // Crown: the growing tip. Only the inflorescence rides the current stem top.
+  const crown  = new THREE.Group(); group.add(crown);
+
+  const leaves = [];
+  for(let i=0;i<pr.nLeaves;i++){
+    const born=i*pr.gap;
+    const attachY=stemTopAt(born, pr.stemHeight);      // height & size locked in when born
+    const deflect=new THREE.Group();                   // parent that lets the flower push the leaf aside
+    deflect.position.y = attachY;
+    const grp=new THREE.Group();
+    const azim=i*137.5*Math.PI/180 + (Math.random()-0.5)*0.16;  // golden-angle phyllotaxis
+    grp.rotation.y = azim;
+    const baseLean=pr.lean + (Math.random()-0.5)*0.12;  // slight natural lean, kept for death-droop
+    grp.rotation.z = baseLean;
+    const age=i/(pr.nLeaves-1);                         // 0 oldest/lowest -> 1 newest/top
+    // the LAST leaf is the flag leaf: a short, narrow, near-vertical blade that
+    // stands up beside the emerging flower, still red-flushed and half-unfurled.
+    const isFlag = (i===pr.nLeaves-1);
+    const sizeVar=0.72 + Math.random()*0.6;             // wide size spread -> ragged palm-like canopy
+    // Juvenile-leaf ramp: a pup's first leaves are TINY and get progressively
+    // bigger as the plant matures (newest leaves are the largest, until flowering).
+    const ag=Math.pow(age,0.82);
+    const len=pr.leafLen*pr.vigor*lerp(0.26,1.06,ag)*sizeVar*(isFlag?0.62:1);
+    const archTip=isFlag ? 60 : lerp(-24, 10, age);    // flag stands erect; lower leaves droop
+    const keel=isFlag ? 0.14 : clamp(0.30 + 0.22*(1-age) + (Math.random()-0.5)*0.12, 0.16, 0.64);
+    const hue=clamp((isFlag?0.24:0.255) - 0.018*(1-age) + (Math.random()-0.5)*0.026, 0.19, 0.30);
+    const sat=clamp((isFlag?0.60:0.52 + 0.05*age)*pr.vigor + (Math.random()-0.5)*0.15, 0.30, 0.72);
+    const lig=clamp((isFlag?0.46:0.40) + 0.07*(1-age) + (Math.random()-0.5)*0.08, 0.28, 0.56);
+    const tint=new THREE.Color().setHSL(hue, sat, lig);
+    const sheen=0.04 + Math.random()*0.14;
+    const nTears = (i < pr.maxDead)
+      ? rndInt(4, 16)
+      : Math.max(0, Math.round(lerp(34, 2, age) + (Math.random()-0.3)*12));
+    const tearTex=leafTearAlpha(nTears); tearTex.offset.y=Math.random(); tearTex.__perLeaf=true;
+    const mat=makeLeafMaterial(tint, i*1.7, len, tearTex, sheen);
+    const mesh=new THREE.Mesh(buildLeafGeometry(len, archTip, keel), mat);
+    mesh.castShadow=true;
+    grp.add(mesh);
+    // thick channeled stalk clasping the stem — the leaf-to-stem connection
+    const petBase=new THREE.Color().setHSL(0.24, 0.46, clamp(0.40+0.05*age,0.3,0.5));
+    const petMat=new THREE.MeshStandardMaterial({ color:petBase.clone(), roughness:0.6,
+      metalness:0, envMapIntensity:0.7, side:THREE.DoubleSide });
+    const petMesh=new THREE.Mesh(buildPetiole(len, archTip), petMat);
+    petMesh.castShadow=true; grp.add(petMesh);
+    // Death fate: the oldest pr.maxDead leaves are doomed to dry out even while the
+    // plant is alive (drought skirt). Senescence later kills ALL of them.
+    const doomed = i < pr.maxDead;
+    let deathAt=2, deathDur=0.3;                        // deathAt>1 => never dies of drought (still senesces)
+    if(doomed){
+      deathAt  = lerp(0.32, 0.9, pr.maxDead>1 ? i/(pr.maxDead) : 0.4) + rnd(-0.05,0.06);
+      deathDur = rnd(0.16, 0.32);
+    }
+    let bornScale = lerp(0.5, 1.05, ag);                 // first leaves render small too
+    if(doomed) bornScale = lerp(0.55, 0.98, ag) * rnd(0.92, 1.05);  // dead skirt still readable
+    if(isFlag) bornScale = 0.58;
+    grp.scale.setScalar(bornScale*0.001);
+    deflect.add(grp); foliage.add(deflect);
+    // where the open blade's tip sits relative to its attachment (for collision
+    // avoidance and for resting dead blades on the soil): x = horizontal reach,
+    // y = rise above the attachment point.
+    const tipP = spine('end', len, archTip)[NV].p;
+    leaves.push({ grp, mat, petMat, petBase, born, bornScale, deflect, attachY, baseLean, isFlag, azim,
+                  reachX:tipP.x, riseY:tipP.y, e:0, deadNow:0,
+                  baseRough:mat.roughness, doomed, deathAt, deathDur, deathTwist:rnd(-0.4,0.4),
+                  senOffset:Math.random()*0.42,          // stagger which leaves die first at senescence
+                  hang:1.2 + Math.random()*0.6,          // how limply it flops down when dead
+                  fleckMax:(0.7 + 0.3*age)*pr.spotBias,
+                  facing: Math.max(0, Math.cos(azim)), yawDir: (Math.sin(azim)>=0?1:-1) });
+  }
+
+  const inflor = buildInflorescence(pr);
+  crown.add(inflor.group);
+
+  const crownFill = buildCrownFill();
+  crown.add(crownFill);
+
+  return { group, stem, stemBase:new THREE.Color(0xdfe7d0), foliage, crown, leaves, inflor, crownFill };
+}
+
+// ----------------------------------------------------------------------------
+// Growth driver
+// ----------------------------------------------------------------------------
+// Advance ONE plant through its life phases (pl.phase = {t, sen, top, rot}):
+//   t    grow -> flower -> fruit
+//   sen  senescence: every leaf dies, the stem browns
+//   top  the spent stem keels over (toppling into clear space)
+//   rot  it shrivels, darkens and sinks into the soil — no popping out
+const _q1=new THREE.Quaternion(), _ax=new THREE.Vector3(), _c2=new THREE.Color();
+function tiltToward(q, az, ang){ _ax.set(Math.sin(az), 0, -Math.cos(az)); return q.setFromAxisAngle(_ax, ang); }
+
+function growPlant(pl){
+  const pr = pl.pr, ph = pl.phase;
+  const t = ph.t, sen = ph.sen, top = ph.top, rot = ph.rot;
+  const ps = ease(t);
+  const h  = stemTopAt(t, pr.stemHeight);
+  pl.hCur = h;
+  pl.stem.scale.set(lerp(0.45,1,ps), h, lerp(0.45,1,ps));
+  pl.crown.position.y = h;
+  pl.crown.scale.setScalar(lerp(0.10,1, clamp(t/CFG.stemFull,0,1)));
+
+  // Orientation: a young sucker leans away from its mother and straightens as it
+  // grows; a spent stem sags in senescence, then keels right over into clear space
+  // and settles flat as it rots.
+  let az = pl.outAz, ang = pl.motherLean * (1 - smooth(clamp(t/0.35,0,1)));
+  if(sen>0){
+    if(pl.toppleAz===null) pl.toppleAz = pickToppleAz(pl);
+    az  = pl.toppleAz;
+    ang = 0.22*smooth(sen) + 1.22*smooth(top) + 0.05*smooth(rot);
+  }
+  tiltToward(_q1, az, ang);
+  pl.group.quaternion.copy(_q1).multiply(pl.qYaw);
+
+  // browning while senescing; shrivel + darken + sink while rotting
+  if(sen>0 || pl._dirty){
+    _c1.copy(pl.stemBase).lerp(DEAD_STEM, smooth(sen));
+    if(rot>0) _c1.lerp(_c2.setHex(0x38291a), smooth(rot));
+    pl.stem.material.color.copy(_c1);
+    pl.stem.material.roughness = lerp(0.55, 0.97, Math.max(sen, rot));
+    pl._dirty = sen>0;
+  }
+  pl.group.scale.setScalar(1 - 0.38*smooth(rot));
+  pl.group.position.set(pl.x, -1.25*rot*rot, pl.z);
+
+  for(const lf of pl.leaves){
+    const e = clamp((t - lf.born)/CFG.emergeDur, 0, 1);
+    const u = clamp((t - lf.born - CFG.emergeDur)/CFG.unfurlDur, 0, 1);
+    lf.grp.visible = e>0.002;
+    const es = smooth(e), bs = lf.bornScale;
+    lf.e = es*smooth(u);                              // how "present" the open blade is
+    // a leaf dies either from drought (doomed, mid-life) or from senescence (all of
+    // them, staggered). Dead blades curl, dry brown and flop limply down the trunk.
+    const droughtDead = lf.doomed ? smooth(clamp((t - lf.deathAt)/lf.deathDur, 0, 1)) : 0;
+    const senDead = smooth(clamp((sen - lf.senOffset)/0.42, 0, 1));
+    const dead = Math.max(droughtDead, senDead);
+    lf.deadNow = dead;
+    if(lf.petMat) lf.petMat.color.copy(lf.petBase).lerp(DEAD_STEM, dead);   // stalk browns with the leaf
+    const shr = 1 - 0.16*dead;                        // barely shortens
+    const wsh = 1 - 0.52*dead;                        // blade rolls/curls inward
+    lf.grp.scale.set(bs*lerp(0.5,1,es)*shr, bs*lerp(0.06,1,es)*shr, bs*lerp(0.5,1,es)*shr*wsh);
+    // dying blades flop down the trunk — but come to REST on the soil mound
+    // instead of stabbing through it: cap the droop so the tip meets the ground.
+    let droop = lf.baseLean - dead*lf.hang;
+    if(dead>0.001 && top===0){
+      const bsE=bs*shr;
+      const posAng=-(pl.yaw+lf.azim);                 // which way this blade points, world frame
+      const ext=bsE*Math.hypot(lf.reachX,lf.riseY)*0.85;
+      const g=moundH(Math.hypot(pl.x+Math.cos(posAng)*ext, pl.z+Math.sin(posAng)*ext)) + 0.04;
+      const Rh=Math.hypot(lf.reachX,lf.riseY), phi=Math.atan2(lf.riseY,lf.reachX);
+      const roMin=Math.asin(clamp((g-lf.attachY)/Math.max(bsE*Rh,1e-4),-1,1)) - phi;
+      droop=Math.max(droop, roMin);
+    }
+    lf.grp.rotation.z = droop;
+    lf.grp.rotation.x = dead*lf.deathTwist;           // dry twist/kink
+    lf.mat.userData.u.uGrow.value = smooth(u);
+    const mature = clamp((t - lf.born - CFG.emergeDur - CFG.unfurlDur)/0.30, 0, 1);
+    let fleck = lf.fleckMax * (1 - smooth(mature));
+    if(lf.isFlag) fleck = Math.max(fleck, 0.5*lf.fleckMax);
+    lf.mat.userData.u.uFleck.value = fleck;
+    lf.mat.userData.u.uDead.value = dead;
+    const wantEm = 0.34*(1-dead);
+    if(lf.mat.emissiveIntensity !== wantEm){
+      lf.mat.emissiveIntensity = wantEm;
+      lf.mat.roughness = lerp(lf.baseRough, 0.92, dead);
+    }
+  }
+  const fp = clamp((t-CFG.flowerStart)/(1-CFG.flowerStart), 0, 1);
+  pl.fp = fp;
+  pl.inflor.group.visible = fp>0.001;
+  if(fp>0.001) pl.inflor.update(fp, rot, sen);
+  pl.crownFill.userData.update(fp, sen, uTime.value);
+}
+
+// ----------------------------------------------------------------------------
+// The mat driver — endless generations
+// ----------------------------------------------------------------------------
+const GROW=22, SEN=9, TOPPLE=4, ROT=7;   // seconds per life phase at 1× speed
+const LIFE=GROW+SEN+TOPPLE+ROT;
+const MAX_STANDING=4, HARD_CAP=8, MAT_R=2.1;
+const plants=[];
+let simT=0, speed=1, paused=false, lastNow=performance.now()/1000;
+
+const wrapPI=(a)=>{ a=(a+Math.PI)%(2*Math.PI); if(a<0)a+=2*Math.PI; return a-Math.PI; };
+function standingCount(T){ let n=0; for(const p of plants) if(T-p.bornT < GROW+SEN) n++; return n; }
+
+// pick a yaw so the flower (which hangs off the plant's local +X) descends into the
+// most open direction — never straight through a neighbour's trunk
+function pickYaw(x,z){
+  let best=rnd(0,6.28), bestScore=-1;
+  for(let k=0;k<10;k++){
+    const psi=rnd(0,6.28);
+    const fx=x+0.6*Math.cos(psi), fz=z-0.6*Math.sin(psi);
+    let s=9;
+    for(const o of plants) s=Math.min(s, Math.hypot(fx-o.x, fz-o.z));
+    if(s>bestScore){ bestScore=s; best=psi; }
+  }
+  return best + rnd(-0.15,0.15);
+}
+// where a sucker breaks ground: right by the mother's base, in the roomiest gap,
+// and never underneath the mother's hanging bunch
+function pickSpawnSpot(parent){
+  let bx=parent.x+0.5, bz=parent.z, bestScore=-1;
+  const flowerAng=-parent.yaw;                          // position-angle of the mother's flower side
+  for(let k=0;k<14;k++){
+    const ang=rnd(0,6.28), dist=rnd(0.42,0.68);
+    let x=parent.x+Math.cos(ang)*dist, z=parent.z+Math.sin(ang)*dist;
+    const r=Math.hypot(x,z); if(r>MAT_R){ x*=MAT_R/r; z*=MAT_R/r; }   // stay in the clump
+    let s=9;
+    for(const o of plants) s=Math.min(s, Math.hypot(x-o.x, z-o.z));
+    if(Math.abs(wrapPI(ang-flowerAng))<0.55) s-=0.8;    // don't grow up into the bunch
+    if(s>bestScore){ bestScore=s; bx=x; bz=z; }
+  }
+  return {x:bx, z:bz};
+}
+// the direction with the most clearance for a dying stem to keel over into
+function pickToppleAz(pl){
+  let best=rnd(0,6.28), bestScore=-1;
+  for(let k=0;k<16;k++){
+    const a=k/16*6.283 + rnd(0,0.2);
+    const dx=Math.cos(a), dz=Math.sin(a);
+    let s=9;
+    for(const o of plants){
+      if(o===pl || simT-o.bornT > GROW+SEN) continue;   // fallen ones aren't in the way
+      const px=o.x-pl.x, pz=o.z-pl.z;
+      const tp=clamp(px*dx+pz*dz, 0, pl.hCur||3);       // closest point on the falling trunk line
+      s=Math.min(s, Math.hypot(px-tp*dx, pz-tp*dz));
+    }
+    if(pl.x*dx+pl.z*dz > 0) s+=0.2;                     // slight bias: fall outward, into the open
+    if(s>bestScore){ bestScore=s; best=a; }
+  }
+  return best;
+}
+
+function spawnPlant(T, x, z, parent){
+  const pr=samplePlant();
+  const pl=makePlant(pr);
+  pl.pr=pr; pl.bornT=T; pl.x=x; pl.z=z; pl._dirty=false;
+  pl.phase={t:0,sen:0,top:0,rot:0}; pl.fp=0; pl.hCur=0.1;
+  pl.toSire=pr.nPups; pl.nextSire=T + GROW*0.42 + rnd(0,3);
+  pl.yaw=pickYaw(x,z);
+  pl.qYaw=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), pl.yaw);
+  pl.outAz=parent ? Math.atan2(z-parent.z, x-parent.x) : rnd(0,6.28);
+  pl.motherLean=parent ? rnd(0.14,0.30) : rnd(0,0.06);  // suckers angle away from the mother at first
+  pl.toppleAz=null;
+  pl.inflor.wx=x; pl.inflor.wz=z; pl.inflor.wyaw=pl.yaw;
+  pl.group.position.set(x,0,z);
+  pl.group.quaternion.copy(pl.qYaw);
+  matGroup.add(pl.group);
+  matGroup.add(pl.inflor.petalGroup);
+  plants.push(pl);
+  return pl;
+}
+function spawnFollower(parent, T){
+  const s=pickSpawnSpot(parent);
+  spawnPlant(T, s.x, s.z, parent);
+}
+function resetMat(){
+  for(const pl of plants.slice()) disposePlantObj(pl);
+  plants.length=0; simT=0;
+  spawnPlant(0, 0, 0, null);   // life starts from nothing: a shoot breaks the bare soil
+}
+
+// world-space obstacles (standing trunks + hanging flower columns), rebuilt each frame
+const obstacles=[];
+function buildObstacles(){
+  obstacles.length=0;
+  for(const pl of plants){
+    const fade=1-smooth(clamp(pl.phase.top*4,0,1));     // release pushes as it keels over
+    if(fade<=0) continue;
+    obstacles.push({ x:pl.x, z:pl.z, r:0.20+0.22*ease(pl.phase.t), y0:0, y1:pl.hCur,
+                     w:fade, owner:pl });
+    if(pl.fp>0.02){                                     // the hanging bell + bunch
+      obstacles.push({ x:pl.x+0.57*Math.cos(pl.yaw), z:pl.z-0.57*Math.sin(pl.yaw), r:0.42,
+                       y0:pl.hCur+pl.inflor.tipY-0.2, y1:pl.hCur+0.35,
+                       w:fade*smooth(clamp(pl.fp/0.12,0,1)), owner:pl });
+    }
+  }
+}
+
+// Physical space: no blade may sweep through a neighbour's trunk, a hanging
+// bunch, OR another leaf. Conflicting blades are yawed smoothly apart (and the
+// lower one dips under the higher), so the canopy visibly parts and layers
+// instead of intersecting — they touch and give way.
+function seg2dClosest(ax,az,bx,bz,cx,cz,dx,dz){          // closest approach of two 2-D segments
+  const ux=bx-ax, uz=bz-az, vx=dx-cx, vz=dz-cz, wx=ax-cx, wz=az-cz;
+  const a=ux*ux+uz*uz, b=ux*vx+uz*vz, c=vx*vx+vz*vz, d=ux*wx+uz*wz, e=vx*wx+vz*wz;
+  const D=a*c-b*b;
+  let s = D<1e-9 ? 0 : clamp((b*e-c*d)/D, 0, 1);
+  let t = clamp((b*s+e)/Math.max(c,1e-9), 0, 1);
+  s = clamp((b*t-d)/Math.max(a,1e-9), 0, 1);
+  const px=ax+ux*s, pz=az+uz*s, qx=cx+vx*t, qz=cz+vz*t;
+  return { s, t, px, pz, qx, qz, dist:Math.hypot(px-qx, pz-qz) };
+}
+const _blades=[];
+function resolveCollisions(){
+  _blades.length=0;
+  // pass 1 — each leaf's target yaw/dip from its own bunch corridor + neighbour trunks/bunches
+  for(const pl of plants){
+    if(pl.phase.top>0) continue;                        // a falling plant's leaves go with it
+    const corridor=smooth(clamp((pl.fp-0.02)/0.22,0,1));
+    for(const lf of pl.leaves){
+      let yaw=0, dip=0;
+      if(!lf.isFlag){
+        const inCorr=clamp((lf.facing-0.20)/0.80,0,1);  // clear a corridor for OUR own bunch
+        const d0=inCorr*corridor;
+        yaw+=lf.yawDir*d0*1.05; dip+=d0*0.28;
+      }
+      if(!lf.isFlag && lf.deadNow<0.65 && lf.e>0.25){
+        const A=pl.yaw+lf.azim;                         // blade azimuth (rotation-angle convention)
+        const bsE=lf.bornScale*lf.e;
+        const R=lf.reachX*bsE;
+        for(const ob of obstacles){
+          if(ob.owner===pl) continue;                   // own trunk/bunch handled above
+          const dx=ob.x-pl.x, dz=ob.z-pl.z;
+          const d=Math.hypot(dx,dz);
+          if(d>=R+ob.r) continue;
+          const hb=lf.attachY + (Math.min(d,R)/Math.max(R,0.01))*lf.riseY*bsE;   // blade height there
+          const hf=clamp(Math.min((ob.y1+0.3-hb)/0.3, (hb-(ob.y0-0.3))/0.3, 1), 0, 1);
+          if(hf<=0) continue;                           // blade passes over/under the obstacle
+          const df=clamp((R+ob.r-d)/0.35, 0, 1);
+          const need=Math.atan2(ob.r+0.16*R, Math.max(d,0.25));
+          const delta=wrapPI(A+yaw - Math.atan2(-dz,dx));
+          if(Math.abs(delta)<need)
+            yaw += (need-Math.abs(delta))*(delta>=0?1:-1)*ob.w*hf*df*0.95;
+        }
+      }
+      lf._tYaw=yaw; lf._tDip=dip; lf._blade=null;
+      // register this leaf as a world-space blade segment for leaf-vs-leaf (uses
+      // its CURRENT rendered yaw, so the test reflects where the blade really is)
+      if(!lf.isFlag && lf.deadNow<0.7 && lf.e>0.28){
+        const A=pl.yaw+lf.azim+lf.deflect.rotation.y;
+        const bsE=lf.bornScale*lf.e, R=lf.reachX*bsE;
+        if(R>0.14){
+          const bd={ lf, pl, A, R, dYaw:0, dDip:0,
+            bx:pl.x, bz:pl.z, yB:lf.attachY,
+            tx:pl.x+Math.cos(A)*R, tz:pl.z-Math.sin(A)*R, yT:lf.attachY+lf.riseY*bsE,
+            hw:clamp(0.15*R, 0.045, 0.13) };
+          lf._blade=bd; _blades.push(bd);
+        }
+      }
+    }
+  }
+  // pass 2 — blades from DIFFERENT plants that overlap in the same height band push apart
+  for(let i=0;i<_blades.length;i++){
+    const a=_blades[i];
+    for(let j=i+1;j<_blades.length;j++){
+      const b=_blades[j];
+      if(a.pl===b.pl) continue;                          // same plant: phyllotaxis already spreads them
+      if(Math.hypot(b.bx-a.bx, b.bz-a.bz) > a.R+b.R+0.25) continue;   // broad phase
+      const cp=seg2dClosest(a.bx,a.bz,a.tx,a.tz, b.bx,b.bz,b.tx,b.tz);
+      const gap=a.hw+b.hw+0.05;
+      if(cp.dist>=gap) continue;
+      const dy=Math.abs(lerp(a.yB,a.yT,cp.s) - lerp(b.yB,b.yT,cp.t));
+      if(dy>=0.22) continue;                             // different vertical layers — they clear
+      const vfac=1-smooth(clamp(dy/0.22,0,1));
+      const pen=(gap-cp.dist);
+      // lateral unit from a's contact toward b's contact
+      let nx=cp.qx-cp.px, nz=cp.qz-cp.pz, nl=Math.hypot(nx,nz);
+      if(nl<1e-4){ nx=b.bx-a.bx; nz=b.bz-a.bz; nl=Math.hypot(nx,nz)||1; }
+      nx/=nl; nz/=nl;
+      // +yaw rotates a blade's tip toward (-sinA,-cosA); pick the sign that moves each blade off the other
+      const pax=-Math.sin(a.A), paz=-Math.cos(a.A);
+      const pbx=-Math.sin(b.A), pbz=-Math.cos(b.A);
+      const da=Math.hypot(cp.px-a.bx, cp.pz-a.bz), db=Math.hypot(cp.qx-b.bx, cp.qz-b.bz);
+      a.dYaw += -Math.sign(nx*pax+nz*paz) * clamp(pen/Math.max(da,0.2), 0, 0.9) * 0.6 * vfac;
+      b.dYaw +=  Math.sign(nx*pbx+nz*pbz) * clamp(pen/Math.max(db,0.2), 0, 0.9) * 0.6 * vfac;
+      // the lower-attached blade ducks under the higher one
+      if(a.yB<b.yB) a.dDip += pen*vfac*1.1; else b.dDip += pen*vfac*1.1;
+    }
+  }
+  // pass 3 — commit: ease each deflection toward its (obstacle + leaf-leaf) target
+  for(const pl of plants){
+    if(pl.phase.top>0) continue;
+    for(const lf of pl.leaves){
+      let ty=lf._tYaw||0, td=lf._tDip||0;
+      if(lf._blade){ ty+=lf._blade.dYaw; td+=lf._blade.dDip; }
+      ty=clamp(ty,-1.3,1.3); td=clamp(td,0,0.6);
+      lf.deflect.rotation.y += (ty - lf.deflect.rotation.y)*0.4;
+      lf.deflect.rotation.z += (-td - lf.deflect.rotation.z)*0.4;
+    }
+  }
+}
+
+function matUpdate(T){
+  if(plants.length===0) spawnPlant(T, 0, 0, null);      // a new seed takes the empty mat
+  for(const pl of plants){
+    const la=T-pl.bornT;
+    pl.phase.t  =growEase(clamp(la/GROW,0,1));
+    pl.phase.sen=clamp((la-GROW)/SEN,0,1);
+    pl.phase.top=clamp((la-GROW-SEN)/TOPPLE,0,1);
+    pl.phase.rot=clamp((la-GROW-SEN-TOPPLE)/ROT,0,1);
+    growPlant(pl);
+    // while alive and growing, the corm sends up followers one at a time —
+    // staggered, and only while there is standing room; it keeps trying as elders
+    // die and free space, so the generations never stall.
+    if(pl.toSire>0 && la<GROW*0.96 && T>=pl.nextSire
+       && standingCount(T)<MAX_STANDING && plants.length<HARD_CAP){
+      spawnFollower(pl, T);
+      pl.toSire--;
+      pl.nextSire = T + rnd(3.5, 7);
+    }
+  }
+  buildObstacles();
+  resolveCollisions();
+  for(let i=plants.length-1;i>=0;i--){
+    if(T-plants[i].bornT > LIFE){ disposePlantObj(plants[i]); plants.splice(i,1); }
+  }
+}
+
+// ----------------------------------------------------------------------------
+// UI
+// ----------------------------------------------------------------------------
+const statusEl=document.getElementById('stage');
+const slider=document.getElementById('grow');
+slider.value=333;                                     // speed control (0 = paused .. 3x)
+function readSpeed(){ speed=(slider.value/1000)*3; }
+readSpeed();
+slider.addEventListener('input', readSpeed);
+const pauseBtn=document.getElementById('replay');
+pauseBtn.textContent='⏸ Pause';
+function togglePause(){ paused=!paused; pauseBtn.textContent=paused?'▶ Play':'⏸ Pause'; }
+pauseBtn.onclick=togglePause;
+document.getElementById('regrow').onclick=resetMat;
+addEventListener('keydown',(e)=>{
+  if(e.key==='g'||e.key==='G') resetMat();
+  else if(e.key==='p'||e.key==='P'||e.key==='r'||e.key==='R') togglePause();
+});
+const rotBtn=document.getElementById('rot');
+rotBtn.onclick=()=>{ controls.autoRotate=!controls.autoRotate; rotBtn.classList.toggle('on',controls.autoRotate); };
+
+// debug / verification hooks
+window.__reset=resetMat;
+window.__setTime=(v)=>{ uTime.value=v; };
+window.__step=(dt)=>{ simT+=dt; matUpdate(simT); };
+window.__render=()=>{ controls.update(); updateSunDir(); renderer.render(scene,camera); };
+window.__view=(px,py,pz,tx,ty,tz)=>{ controls.autoRotate=false; camera.position.set(px,py,pz);
+  controls.target.set(tx,ty,tz); controls.update(); updateSunDir(); renderer.render(scene,camera); };
+window.__plantInfo=()=>plants.map(p=>({x:+p.x.toFixed(2),z:+p.z.toFixed(2),yaw:+p.yaw.toFixed(2),
+  toppleAz:p.toppleAz==null?null:+p.toppleAz.toFixed(2),hCur:+p.hCur.toFixed(2),
+  top:+p.phase.top.toFixed(2),rot:+p.phase.rot.toFixed(2)}));
+window.__collStats=()=>{
+  let pushed=0, total=0, maxY=0, dipped=0, maxDip=0;
+  for(const p of plants) for(const lf of p.leaves){
+    if(lf.e<0.25||lf.isFlag) continue; total++;
+    const y=Math.abs(lf.deflect.rotation.y), d=Math.abs(lf.deflect.rotation.z);
+    if(y>0.08) pushed++; if(y>maxY) maxY=y;
+    if(d>0.05) dipped++; if(d>maxDip) maxDip=d;
+  }
+  return {pushed, total, maxY:+maxY.toFixed(2), dipped, maxDip:+maxDip.toFixed(2), blades:_blades.length};
+};
+window.__matStats=()=>({ n:plants.length, standing:standingCount(simT),
+  ages:plants.map(p=>+(simT-p.bornT).toFixed(1)),
+  phases:plants.map(p=>({t:+p.phase.t.toFixed(2),sen:+p.phase.sen.toFixed(2),top:+p.phase.top.toFixed(2),rot:+p.phase.rot.toFixed(2)})) });
+
+// ----------------------------------------------------------------------------
+// Loop
+// ----------------------------------------------------------------------------
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+window.__paused=false;
+const _sunTravel=new THREE.Vector3();
+function updateSunDir(){
+  _sunTravel.set(0,2,0).sub(sun.position).normalize().transformDirection(camera.matrixWorldInverse);
+  uSunDir.value.copy(_sunTravel);
+}
+function tick(){
+  if(window.__paused){ requestAnimationFrame(tick); return; }
+  const now=performance.now()/1000;
+  const dt=Math.min(0.05, now-lastNow); lastNow=now;
+  uTime.value=now;
+  if(!paused) simT += dt*speed;
+  updateSunDir();
+  matUpdate(simT);
+  matGroup.rotation.z = 0.005*Math.sin(now*0.4);      // the whole clump breathes in the wind
+  matGroup.rotation.x = 0.004*Math.sin(now*0.33+2.0);
+  statusEl.textContent = plants.length+' plant'+(plants.length!==1?'s':'')+' · '+(paused?'paused':speed.toFixed(1)+'×');
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(tick);
+}
+resetMat();
+tick();
+
+window.__ready=true;
+</script>
+</body>
+</html>

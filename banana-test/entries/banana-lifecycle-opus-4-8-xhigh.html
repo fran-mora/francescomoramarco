@@ -1,0 +1,1163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Cavendish Banana — Lifecycle</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0f0a;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  #app{position:fixed;inset:0;}
+  canvas{display:block;}
+  /* ---- speed dial (the only visible widget) ---- */
+  #dial{position:fixed;right:22px;bottom:22px;width:104px;height:104px;z-index:10;
+    touch-action:none;cursor:ns-resize;user-select:none;-webkit-user-select:none;}
+  #dial svg{display:block;filter:drop-shadow(0 6px 14px rgba(0,0,0,.45));}
+  #dial .lbl{position:absolute;left:0;right:0;bottom:-2px;text-align:center;color:#dfe9d8;
+    font-size:11px;letter-spacing:.14em;opacity:.72;pointer-events:none;text-transform:uppercase;}
+  #dial .val{position:absolute;left:0;right:0;top:41px;text-align:center;color:#f2f7ea;
+    font-size:19px;font-weight:600;pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.6);}
+  #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    color:#cfe0c2;font-size:15px;letter-spacing:.08em;z-index:20;background:#0a0f0a;transition:opacity .8s;}
+  #err{position:fixed;left:12px;bottom:12px;max-width:60vw;color:#ffb3b3;font-size:12px;
+    font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;z-index:30;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="loading">growing a banana plant…</div>
+<div id="dial" title="Drag up / down to change speed">
+  <svg width="104" height="104" viewBox="0 0 104 104">
+    <defs>
+      <radialGradient id="knob" cx="42%" cy="36%" r="72%">
+        <stop offset="0%" stop-color="#3a4a30"/>
+        <stop offset="60%" stop-color="#232d1c"/>
+        <stop offset="100%" stop-color="#141a10"/>
+      </radialGradient>
+    </defs>
+    <circle cx="52" cy="52" r="46" fill="none" stroke="#000" stroke-opacity=".35" stroke-width="9"/>
+    <path id="track" fill="none" stroke="#1e271a" stroke-width="7" stroke-linecap="round"/>
+    <path id="fill"  fill="none" stroke="#8fca4e" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="52" cy="52" r="34" fill="url(#knob)" stroke="#0c110a" stroke-width="1.5"/>
+    <line id="ind" x1="52" y1="52" x2="52" y2="26" stroke="#cdec92" stroke-width="3.4" stroke-linecap="round"/>
+  </svg>
+  <div class="val" id="dialVal">1.0×</div>
+  <div class="lbl">speed</div>
+</div>
+<div id="err"></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const errEl = document.getElementById('err');
+const showErr = (m)=>{ errEl.textContent = String(m); };
+window.addEventListener('error', e=> showErr(e.message + '\n' + (e.error && e.error.stack || '')));
+
+/* =========================================================================
+   Small math helpers
+   ========================================================================= */
+const clamp=(x,a,b)=>x<a?a:(x>b?b:x);
+const lerp=(a,b,t)=>a+(b-a)*t;
+function smoothstep(e0,e1,x){ let t=clamp((x-e0)/(e1-e0),0,1); return t*t*(3-2*t); }
+const TAU=Math.PI*2;
+function hash(n){ const s=Math.sin(n*127.1+311.7)*43758.5453; return s-Math.floor(s); }
+// value noise 1D
+function vnoise(x){ const i=Math.floor(x), f=x-i; const u=f*f*(3-2*f);
+  return lerp(hash(i),hash(i+1),u); }
+// mix color arrays [r,g,b]
+function mix3(a,b,t){ return [ a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t ]; }
+
+/* =========================================================================
+   Procedural canvas textures  (no external assets)
+   ========================================================================= */
+function cnv(w,h){ const c=document.createElement('canvas'); c.width=w;c.height=h; return c; }
+function toTex(c,{rep=[1,1],aniso=8,srgb=true}={}){
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rep[0],rep[1]);
+  t.anisotropy=aniso; if(srgb) t.colorSpace=THREE.SRGBColorSpace;
+  t.needsUpdate=true; return t;
+}
+
+// -- Leaf detail: RGB = subtle vein/midrib shading (near white); A = blade mask + tear slits
+function makeLeafTexture(){
+  const W=1024,H=384,c=cnv(W,H),g=c.getContext('2d');
+  // base near-white so vertexColors drive hue
+  g.fillStyle='#ffffff'; g.fillRect(0,0,W,H);
+  const midY=H*0.5;
+  // faint overall shading, lighter near midrib
+  const grad=g.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'rgba(150,150,150,0.30)');
+  grad.addColorStop(0.5,'rgba(255,255,255,0.0)');
+  grad.addColorStop(1,'rgba(150,150,150,0.30)');
+  g.fillStyle=grad; g.fillRect(0,0,W,H);
+  // lateral veins: many fine strokes running from midrib to edges, angled toward tip
+  g.lineWidth=1; g.strokeStyle='rgba(90,110,70,0.34)';
+  for(let x=6;x<W;x+=7){
+    const jitter=(hash(x)*2-1)*2;
+    g.beginPath();
+    g.moveTo(x, midY);
+    g.lineTo(x+ H*0.10 + jitter, 4);         // up to top edge, angled toward tip (+x)
+    g.moveTo(x, midY);
+    g.lineTo(x+ H*0.10 - jitter, H-4);        // down to bottom edge
+    g.stroke();
+  }
+  // secondary faint veins
+  g.strokeStyle='rgba(120,140,95,0.16)'; g.lineWidth=0.8;
+  for(let x=3;x<W;x+=3.5){
+    g.beginPath(); g.moveTo(x,midY-2); g.lineTo(x+H*0.09,4); g.stroke();
+    g.beginPath(); g.moveTo(x,midY+2); g.lineTo(x+H*0.09,H-4); g.stroke();
+  }
+  // midrib: strong pale band with a darker core
+  const mr=g.createLinearGradient(0,midY-10,0,midY+10);
+  mr.addColorStop(0,'rgba(255,255,255,0)');
+  mr.addColorStop(0.5,'rgba(210,220,180,0.9)');
+  mr.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=mr; g.fillRect(0,midY-10,W,20);
+  g.strokeStyle='rgba(150,165,120,0.6)'; g.lineWidth=2.5;
+  g.beginPath(); g.moveTo(0,midY); g.lineTo(W,midY); g.stroke();
+
+  // ---- Alpha channel: blade mask + tear slits ----
+  const img=g.getImageData(0,0,W,H); const d=img.data;
+  // tear definitions (from edge inward), present but subtle; deepen visually via geometry for old leaves
+  const tears=[];
+  for(let i=0;i<4;i++){
+    tears.push({ x: 0.20+hash(i*3.1)*0.62, side: hash(i*7.7)>0.5?1:-1,
+                 depth: 0.08+hash(i*2.3)*0.24, w: 0.0022+hash(i*5.9)*0.003 });
+  }
+  for(let y=0;y<H;y++){
+    const vv=(y/(H-1))*2-1;                 // -1..1 across width
+    for(let x=0;x<W;x++){
+      const u=x/(W-1);
+      let a=255;
+      // feather the very tip/base a touch handled by geometry; here just tears
+      for(const t of tears){
+        // tear is a thin slit near u=t.x, coming from edge (side) toward midrib to depth
+        const edge = t.side>0 ? 1 : -1;
+        const reach = edge*(1 - t.depth);   // v coordinate the tear reaches
+        const inSlit = Math.abs(u - t.x) < t.w;
+        const between = (edge>0) ? (vv> reach) : (vv< reach);
+        if(inSlit && between){ a=0; }
+      }
+      d[(y*W+x)*4+3]=a;
+    }
+  }
+  g.putImageData(img,0,0);
+  return toTex(c,{rep:[1,1]});
+}
+
+// -- Pseudostem: vertical fibrous sheaths, brown at base blending to green, waxy streaks
+function makeStemTexture(){
+  const W=512,H=1024,c=cnv(W,H),g=c.getContext('2d');
+  const grad=g.createLinearGradient(0,H,0,0);
+  grad.addColorStop(0.0,'#6a5a33');
+  grad.addColorStop(0.18,'#7d7136');
+  grad.addColorStop(0.5,'#8f9a49');
+  grad.addColorStop(1.0,'#9fb055');
+  g.fillStyle=grad; g.fillRect(0,0,W,H);
+  // vertical fibers
+  for(let i=0;i<190;i++){
+    const x=hash(i*1.7)*W; const wdt=0.6+hash(i*2.9)*2.2;
+    const dark=hash(i*3.3)>0.5;
+    g.strokeStyle= dark? 'rgba(40,44,22,0.20)':'rgba(220,225,180,0.14)';
+    g.lineWidth=wdt;
+    g.beginPath();
+    let x0=x;
+    for(let y=0;y<=H;y+=32){ g.lineTo(x0+Math.sin(y*0.01+i)*1.2, y); }
+    g.stroke();
+  }
+  // sheath overlap seams (few wide vertical bands)
+  for(let i=0;i<7;i++){
+    const x=(i+0.5)/7*W + (hash(i)*20-10);
+    const bg=g.createLinearGradient(x-30,0,x+30,0);
+    bg.addColorStop(0,'rgba(0,0,0,0)');
+    bg.addColorStop(0.5,'rgba(30,36,16,0.22)');
+    bg.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=bg; g.fillRect(x-30,0,60,H);
+  }
+  // brown weathering blotches near base
+  for(let i=0;i<70;i++){
+    const y=H*(0.55+hash(i*4.1)*0.45); const x=hash(i*6.3)*W;
+    const r=6+hash(i*1.1)*26;
+    g.fillStyle=`rgba(70,52,26,${0.05+hash(i*9.2)*0.12})`;
+    g.beginPath(); g.ellipse(x,y,r,r*1.6,0,0,TAU); g.fill();
+  }
+  return toTex(c,{rep:[1,1]});
+}
+
+// -- Bract (flower bract): reddish-purple, waxy sheen, paler tip, subtle ribs
+function makeBractTexture(){
+  const W=256,H=512,c=cnv(W,H),g=c.getContext('2d');
+  const grad=g.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0.0,'#c99a86');   // pale creamy tip (small band)
+  grad.addColorStop(0.07,'#8a3348');
+  grad.addColorStop(0.28,'#6e162f');  // deep crimson
+  grad.addColorStop(0.65,'#59122a');
+  grad.addColorStop(1.0,'#3f0e20');   // dark maroon base
+  g.fillStyle=grad; g.fillRect(0,0,W,H);
+  // purple wash for the waxy bloom
+  const pw=g.createLinearGradient(0,0,0,H);
+  pw.addColorStop(0.0,'rgba(90,30,80,0)');
+  pw.addColorStop(0.5,'rgba(78,26,74,0.22)');
+  pw.addColorStop(1.0,'rgba(50,16,52,0.30)');
+  g.fillStyle=pw; g.fillRect(0,0,W,H);
+  // longitudinal ribs
+  for(let i=0;i<16;i++){
+    const x=i/16*W;
+    g.strokeStyle='rgba(30,6,18,0.22)'; g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(x,0); g.lineTo(x,H); g.stroke();
+  }
+  // soft waxy bloom highlight (muted, not pink)
+  const hl=g.createLinearGradient(0,0,W,0);
+  hl.addColorStop(0,'rgba(255,255,255,0)');
+  hl.addColorStop(0.42,'rgba(226,205,225,0.12)');
+  hl.addColorStop(0.6,'rgba(226,205,225,0.04)');
+  hl.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=hl; g.fillRect(0,0,W,H);
+  return toTex(c,{rep:[1,1]});
+}
+
+// -- Banana finger: pale base with 5 ridges + speckles (tint via instanceColor)
+function makeBananaTexture(){
+  const W=256,H=256,c=cnv(W,H),g=c.getContext('2d');
+  g.fillStyle='#ffffff'; g.fillRect(0,0,W,H);
+  // longitudinal ridge shading (5 lobes across U)
+  for(let x=0;x<W;x++){
+    const a=(x/W)*TAU*5;
+    const shade=0.5+0.5*Math.cos(a);
+    g.fillStyle=`rgba(120,120,90,${0.16*shade})`;
+    g.fillRect(x,0,1,H);
+  }
+  // faint length streaks
+  g.strokeStyle='rgba(150,150,110,0.10)'; g.lineWidth=1;
+  for(let i=0;i<40;i++){ const y=hash(i)*H; g.beginPath(); g.moveTo(0,y); g.lineTo(W,y+ (hash(i*3)*6-3)); g.stroke(); }
+  // brown speckles (become visible when ripe via darker tint anyway)
+  for(let i=0;i<120;i++){
+    const x=hash(i*2.1)*W,y=hash(i*3.7)*H,r=0.6+hash(i*1.3)*2.4;
+    g.fillStyle=`rgba(70,45,20,${0.10+hash(i*5.5)*0.16})`;
+    g.beginPath(); g.arc(x,y,r,0,TAU); g.fill();
+  }
+  // tip browning band
+  const tb=g.createLinearGradient(0,0,0,H);
+  tb.addColorStop(0,'rgba(60,40,20,0.4)');
+  tb.addColorStop(0.08,'rgba(60,40,20,0)');
+  tb.addColorStop(0.92,'rgba(60,40,20,0)');
+  tb.addColorStop(1,'rgba(50,30,16,0.5)');
+  g.fillStyle=tb; g.fillRect(0,0,W,H);
+  return toTex(c,{rep:[1,1]});
+}
+
+// -- Soil
+function makeSoilTexture(){
+  const W=1024,H=1024,c=cnv(W,H),g=c.getContext('2d');
+  g.fillStyle='#6a5236'; g.fillRect(0,0,W,H);
+  for(let i=0;i<26000;i++){
+    const x=hash(i*1.3)*W,y=hash(i*2.7)*H;
+    const t=hash(i*5.1);
+    const base= t<0.5 ? [104,82,52] : [78,60,38];
+    const v=(hash(i*9.9)-0.5)*34;
+    g.fillStyle=`rgb(${clamp(base[0]+v,0,255)|0},${clamp(base[1]+v,0,255)|0},${clamp(base[2]+v*0.7,0,255)|0})`;
+    const r=0.5+hash(i*3.3)*2.2;
+    g.fillRect(x,y,r,r);
+  }
+  // some pebbles / organic litter
+  for(let i=0;i<220;i++){
+    const x=hash(i*4.4)*W,y=hash(i*8.8)*H,r=2+hash(i*2.2)*7;
+    g.fillStyle=`rgba(${90+hash(i)*40|0},${80+hash(i*2)*30|0},${60+hash(i*3)*30|0},0.5)`;
+    g.beginPath(); g.ellipse(x,y,r,r*0.7,hash(i)*TAU,0,TAU); g.fill();
+  }
+  return toTex(c,{rep:[6,6]});
+}
+
+// -- Sky gradient (equirect-ish on background sphere via canvas)
+function makeSkyTexture(){
+  const W=64,H=512,c=cnv(W,H),g=c.getContext('2d');
+  const grad=g.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0.0,'#3f79b0');
+  grad.addColorStop(0.35,'#77abd2');
+  grad.addColorStop(0.62,'#bcd6e4');
+  grad.addColorStop(0.80,'#e7eede');
+  grad.addColorStop(1.0,'#d9cf9f');
+  g.fillStyle=grad; g.fillRect(0,0,W,H);
+  return toTex(c,{rep:[1,1],srgb:true});
+}
+
+/* =========================================================================
+   Renderer / Scene / Camera / Lights
+   ========================================================================= */
+const app=document.getElementById('app');
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.02;
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.fog=new THREE.Fog(0xd6dac4, 24, 74);
+
+// sky dome
+const skyTex=makeSkyTexture();
+const sky=new THREE.Mesh(
+  new THREE.SphereGeometry(200,32,16),
+  new THREE.MeshBasicMaterial({map:skyTex,side:THREE.BackSide,fog:false,depthWrite:false})
+);
+scene.add(sky);
+
+const camera=new THREE.PerspectiveCamera(46, innerWidth/innerHeight, 0.1, 400);
+camera.position.set(11, 6.4, 14);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.dampingFactor=0.06;
+controls.target.set(0,3.6,0);
+controls.minDistance=6; controls.maxDistance=40;
+controls.minPolarAngle=0.35; controls.maxPolarAngle=Math.PI*0.495;
+controls.autoRotate=true; controls.autoRotateSpeed=0.42;
+controls.addEventListener('start',()=>{ controls.autoRotate=false; clearTimeout(controls._t); });
+controls.addEventListener('end',()=>{ controls._t=setTimeout(()=>controls.autoRotate=true,4200); });
+
+// lights
+const hemi=new THREE.HemisphereLight(0xcfe6ff, 0x6a5636, 1.15);
+scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xfff1d4, 2.5);
+sun.position.set(14,20,8);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=1; sun.shadow.camera.far=70;
+const sc=20; Object.assign(sun.shadow.camera,{left:-sc,right:sc,top:sc,bottom:-sc});
+sun.shadow.bias=-0.0004; sun.shadow.normalBias=0.035; sun.shadow.radius=4.5;
+sun.shadow.blurSamples=16;
+scene.add(sun); scene.add(sun.target);
+const fill=new THREE.DirectionalLight(0xbcd0ff,0.55); fill.position.set(-12,9,-10); scene.add(fill);
+
+// soft image-based environment from the sky gradient for gentle specular sheen
+const pmrem=new THREE.PMREMGenerator(renderer);
+const envRT=pmrem.fromEquirectangular(skyTex);
+scene.environment=envRT.texture;
+
+// ground
+const soilTex=makeSoilTexture();
+const ground=new THREE.Mesh(
+  new THREE.CircleGeometry(60,64),
+  new THREE.MeshStandardMaterial({map:soilTex,roughness:0.97,metalness:0.0,color:0xffffff})
+);
+ground.rotation.x=-Math.PI/2; ground.receiveShadow=true; scene.add(ground);
+
+// a few background palms/mounds hinted via low dark cones + distant haze handled by fog
+// scattered small rocks near center for grounding
+(function scatterRocks(){
+  const rockGeo=new THREE.IcosahedronGeometry(0.18,0);
+  const rockMat=new THREE.MeshStandardMaterial({color:0x6b6355,roughness:1,flatShading:true});
+  const im=new THREE.InstancedMesh(rockGeo,rockMat,60);
+  const m=new THREE.Matrix4(), q=new THREE.Quaternion(), s=new THREE.Vector3(), p=new THREE.Vector3();
+  for(let i=0;i<60;i++){
+    const ang=hash(i)*TAU, rad=3+hash(i*3)*20;
+    p.set(Math.cos(ang)*rad, 0.03, Math.sin(ang)*rad);
+    q.setFromEuler(new THREE.Euler(hash(i)*3,hash(i*2)*6,hash(i*4)*3));
+    const sc2=0.4+hash(i*5)*1.4; s.set(sc2,sc2*0.6,sc2);
+    m.compose(p,q,s); im.setMatrixAt(i,m);
+  }
+  im.castShadow=true; im.receiveShadow=true; scene.add(im);
+})();
+
+// distant, hazy banana clumps for depth (simplified silhouettes, fogged toward the horizon)
+(function backdrop(){
+  const grp=new THREE.Group(); scene.add(grp);
+  const stemMat=new THREE.MeshStandardMaterial({color:0x5c6a38,roughness:0.9});
+  const leafMat=new THREE.MeshStandardMaterial({color:0x33502a,roughness:0.85,
+    side:THREE.DoubleSide, envMapIntensity:0.3});
+  const stemGeo=new THREE.CylinderGeometry(0.14,0.28,1,7,1);
+  const leafGeo=new THREE.SphereGeometry(1,8,5,0,TAU,0,Math.PI*0.5); // half-dome frond mass
+  const N=22;
+  for(let i=0;i<N;i++){
+    const ang=(i/N)*TAU + hash(i)*0.5;
+    const rad=38+hash(i*2.1)*26;
+    const h=2.6+hash(i*3.3)*2.6;
+    const g=new THREE.Group();
+    g.position.set(Math.cos(ang)*rad, 0, Math.sin(ang)*rad);
+    g.rotation.y=hash(i*5)*TAU;
+    const s=new THREE.Mesh(stemGeo,stemMat); s.scale.set(1,h,1); s.position.y=h/2; g.add(s);
+    // a broad, drooping frond mass (reads as a bushy clump on the horizon)
+    const nl=4+((hash(i*7)*3)|0);
+    for(let j=0;j<nl;j++){
+      const lf=new THREE.Mesh(leafGeo,leafMat);
+      const a2=j/nl*TAU+hash(i*9+j);
+      const spread=2.1+hash(i+j)*1.3;
+      lf.scale.set(spread,0.55+hash(j)*0.35,spread*0.7);
+      lf.position.set(Math.cos(a2)*0.6, h+ (hash(j)*0.5-0.3), Math.sin(a2)*0.6);
+      lf.rotation.set(0.7+hash(j)*0.5, a2, 0);
+      g.add(lf);
+    }
+    grp.add(g);
+  }
+})();
+
+/* shared textures/materials */
+const TEX={
+  leaf:makeLeafTexture(),
+  stem:makeStemTexture(),
+  bract:makeBractTexture(),
+  banana:makeBananaTexture(),
+};
+
+/* =========================================================================
+   Color palettes for life stages
+   ========================================================================= */
+const COL={
+  leafYoung:[0.50,0.23,0.19],   // bronze/reddish new leaf
+  leafYoung2:[0.56,0.57,0.29],  // pale yellow-green new
+  leafMottle:[0.30,0.11,0.12],  // dark reddish blotches on very young leaves
+  leafGreen:[0.17,0.36,0.09],
+  leafGreenLo:[0.24,0.44,0.13],
+  leafYellow:[0.74,0.62,0.11],
+  leafBrown:[0.34,0.22,0.07],
+  fruitGreen:[0.30,0.47,0.10],
+  fruitYellow:[0.97,0.78,0.11],
+  fruitBrown:[0.45,0.30,0.09],
+};
+
+/* =========================================================================
+   LEAF   — parametric ribbon with arch, droop, furl-roll, age & tears
+   ========================================================================= */
+const NU=26, NV=8;               // segments
+const NUP=NU+1, NVP=NV+1;
+const LEAF_VCOUNT=NUP*NVP;
+
+function buildLeafGeometry(){
+  const geo=new THREE.BufferGeometry();
+  const pos=new Float32Array(LEAF_VCOUNT*3);
+  const col=new Float32Array(LEAF_VCOUNT*3);
+  const uv =new Float32Array(LEAF_VCOUNT*2);
+  const uParam=new Float32Array(LEAF_VCOUNT);
+  const vParam=new Float32Array(LEAF_VCOUNT);
+  const rnd   =new Float32Array(LEAF_VCOUNT);
+  let k=0;
+  for(let iu=0;iu<NUP;iu++){
+    for(let iv=0;iv<NVP;iv++){
+      const u=iu/NU, v=(iv/NV)*2-1;
+      uParam[k]=u; vParam[k]=v; rnd[k]=hash(iu*13.1+iv*7.7);
+      uv[k*2]=u; uv[k*2+1]=(v+1)*0.5;
+      k++;
+    }
+  }
+  const idx=[];
+  for(let iu=0;iu<NU;iu++){
+    for(let iv=0;iv<NV;iv++){
+      const a=iu*NVP+iv, b=a+NVP;
+      idx.push(a,b,a+1, a+1,b,b+1);
+    }
+  }
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+  geo.setAttribute('uv',new THREE.BufferAttribute(uv,2));
+  geo.setIndex(idx);
+  geo.userData={uParam,vParam,rnd};
+  return geo;
+}
+
+class Leaf{
+  constructor(plant,i){
+    this.plant=plant; this.i=i;
+    const N=plant.cfg.nLeaves;
+    // emergence spread across vegetative + early flowering
+    this.aEmerge = lerp(0.035, 0.60, i/(N-1)) + (hash(i+plant.seed)*0.01);
+    this.growDur = 0.060;
+    // senescence: oldest (i=0) go first
+    this.senStart = lerp(0.70, 1.04, i/(N-1));
+    this.senDur   = 0.16;
+    // final size — peaks mid-canopy, smaller at both ends (flag leaf small)
+    const sp = Math.sin(Math.PI*(i+0.6)/(N+0.2));
+    this.len = plant.cfg.leafLen * (0.5 + 0.62*sp) * (0.9+hash(i*2.3)*0.2);
+    this.width = this.len*0.255*(0.92+hash(i*3.1)*0.16);
+    this.azim = i*2.3999632 + plant.seed*TAU;        // golden angle spiral
+    this.baseTilt = (hash(i*5.5)-0.5)*0.18;           // slight per-leaf tilt asymmetry
+    this.archVar = (hash(i*8.3+plant.seed)-0.35)*0.55; // some leaves flatter, some droop more
+    this.rc = 0.10;                                    // furl roll radius
+    this.windPhase = hash(i*9.1)*TAU;
+
+    const geo=buildLeafGeometry();
+    const mat=new THREE.MeshStandardMaterial({
+      map:TEX.leaf, vertexColors:true, side:THREE.DoubleSide,
+      roughness:0.58, metalness:0.0, alphaTest:0.5, envMapIntensity:0.38,
+    });
+    this.mat=mat;
+    this.mesh=new THREE.Mesh(geo,mat);
+    this.mesh.castShadow=true; this.mesh.receiveShadow=true;
+    // pivot group so we can sway/orient without touching vertices
+    this.pivot=new THREE.Group();
+    this.pivot.add(this.mesh);
+    this.pivot.rotation.y=this.azim;
+    plant.crown.add(this.pivot);
+
+    this._settled=false; this._lastMatur=-1; this._lastSen=-1;
+    this.mesh.visible=false;
+  }
+
+  update(a, health){
+    const localAge=a-this.aEmerge;
+    if(localAge<0){ this.mesh.visible=false; return; }
+    this.mesh.visible=true;
+    const matur=smoothstep(0,this.growDur,localAge);
+    // senescence from own age and plant-wide decline (all leaves fully senesce by ~0.99)
+    let sen=smoothstep(this.senStart,this.senStart+this.senDur,a);
+    const N=this.plant.cfg.nLeaves;
+    sen=Math.max(sen, smoothstep(0.85,0.965,a));              // oldest-first handled by senStart
+    sen=Math.max(sen, smoothstep(0.93,0.99, a + 0.015*this.i/N)); // guarantee full clearing at wrap
+    sen=clamp(sen,0,1);
+
+    // recompute geometry only while it is changing
+    const changed = Math.abs(matur-this._lastMatur)>0.002 || Math.abs(sen-this._lastSen)>0.002 || !this._settled;
+    if(changed){ this._deform(matur,sen,health); this._lastMatur=matur; this._lastSen=sen;
+      this._settled = (matur>0.999 && sen<0.002); }
+
+    // retract fully-dead leaf (opaque cutout can't fade, so scale it away)
+    const retract = 1.0 - smoothstep(0.88,1.0,sen)*0.96;
+    this.pivot.scale.setScalar(retract);
+
+    // gentle wind sway (group level, cheap)
+    const t=SIM.t;
+    const s = 0.05*(1-sen*0.4);
+    this.pivot.rotation.z = this.baseTilt + Math.sin(t*0.9+this.windPhase)*s*0.5;
+    this.pivot.rotation.x = Math.sin(t*0.7+this.windPhase*1.7)*s*0.35;
+    this.pivot.rotation.y = this.azim + Math.sin(t*0.5+this.windPhase)*0.02;
+  }
+
+  _deform(matur,sen,health){
+    const g=this.mesh.geometry;
+    const pos=g.attributes.position.array;
+    const col=g.attributes.color.array;
+    const {uParam,vParam,rnd}=g.userData;
+
+    const L=this.len*matur*(1-0.10*sen);
+    const Wmax=this.width*matur;
+    const rollFactor=smoothstep(0.36,0.06,matur);          // 1 when very young (furled cigar)
+    const cupAmt=0.86+0.34*sen;                            // edges drape below the raised midrib
+    const tearDepth=1.15*sen;
+    const ds=L/NU;
+
+    // integrate spine (arch) in local X-Y plane
+    const arch=matur;
+    const th0=1.46 - 0.30*arch - 1.65*sen;                 // whole leaf pitches down as it senesces
+    const th1=1.46 - (1.98+this.archVar+1.55*sen)*arch - 0.6*sen; // tip droop (varies per leaf)
+    const sx=new Float32Array(NUP), sy=new Float32Array(NUP);
+    let x=0,y=0; sx[0]=0; sy[0]=0;
+    for(let iu=1;iu<NUP;iu++){
+      const um=(iu-0.5)/NU;
+      const th=th0+(th1-th0)*smoothstep(0,1,um);
+      x+=Math.cos(th)*ds; y+=Math.sin(th)*ds;
+      sx[iu]=x; sy[iu]=y;
+    }
+    // per-column tear droop offsets (independent hanging ribbons for old leaves)
+    const colDroop=new Float32Array(NVP);
+    for(let iv=0;iv<NVP;iv++){ colDroop[iv]=(hash(iv*4.7+this.i)*2-1); }
+
+    // half-width profile helper
+    const rc=this.rc*(0.6+0.4*(1-matur));
+
+    let k=0;
+    for(let iu=0;iu<NUP;iu++){
+      const u=uParam[k]; // same for the row start
+      const spineX=sx[iu], spineY=sy[iu];
+      // blade width profile
+      const shape = smoothstep(0.10,0.30,u) * (1-smoothstep(0.72,1.0,u));
+      let hw = Wmax*shape;
+      hw = Math.max(hw, 0.02*L*(1-shape*0.0)); // thin petiole/midrib always
+      for(let iv=0;iv<NVP;iv++){
+        const v=vParam[k];
+        const latArc=v*hw;
+        // flat vs rolled (furl)
+        const flatZ=latArc, flatX=0;
+        const ang=latArc/Math.max(rc,1e-4);
+        const rollZ=rc*Math.sin(ang), rollX=rc*(1-Math.cos(ang));
+        let lz=lerp(flatZ,rollZ,rollFactor);
+        let lx=lerp(flatX,rollX,rollFactor);
+        // droop (cup) — edges below midrib
+        let dy=-cupAmt*(v*v)*hw;
+        // torn ribbon hanging for old leaves (stronger toward tip)
+        dy -= tearDepth*Math.abs(v)*colDroop[iv]*u*0.5*hw*3.0;
+        // subtle twist along length for realism
+        const tw=(0.12+0.18*matur)*u*(1+0.4*sen);
+        const cz=Math.cos(tw), sxn=Math.sin(tw);
+        const rzz=lz*cz - lx*sxn;   // rotate lateral around length axis a touch
+        const rxx=lz*sxn + lx*cz;
+        pos[k*3  ]=spineX+rxx;
+        pos[k*3+1]=spineY+dy;
+        pos[k*3+2]=rzz;
+
+        // ---- color ----
+        // base green modulated by health
+        let base=mix3(COL.leafGreen,COL.leafGreenLo, 0.5+0.35*v*v);
+        base=mix3(base,[0.20,0.30,0.10], (1-health)*0.6);
+        // young reddish-bronze cast with dark mottling, fading as the leaf matures
+        const youngMix=1-smoothstep(0.08,0.50,matur);
+        if(youngMix>0.001){
+          const yc=mix3(COL.leafYoung,COL.leafYoung2,0.18+0.42*v*v); // edges paler, midrib bronzer
+          base=mix3(base,yc,youngMix);
+          const blotch=smoothstep(0.62,0.9,rnd[k]);                  // scattered dark patches
+          base=mix3(base,COL.leafMottle,blotch*youngMix*0.6);
+        }
+        // senescence: tips & edges brown first
+        const sv=clamp(sen*(0.35+0.75*u)+sen*0.35*Math.abs(v),0,1.3);
+        let c=mix3(base,COL.leafYellow,smoothstep(0.0,0.55,sv));
+        c=mix3(c,COL.leafBrown,smoothstep(0.55,1.05,sv));
+        // mottle
+        const m=(rnd[k]-0.5)*0.06;
+        col[k*3  ]=clamp(c[0]+m,0,1);
+        col[k*3+1]=clamp(c[1]+m,0,1);
+        col[k*3+2]=clamp(c[2]+m*0.5,0,1);
+        k++;
+      }
+    }
+    g.attributes.position.needsUpdate=true;
+    g.attributes.color.needsUpdate=true;
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+  }
+}
+
+/* =========================================================================
+   PSEUDOSTEM
+   ========================================================================= */
+function buildStem(plant){
+  const H=plant.cfg.stemHeight, R0=plant.cfg.stemBaseR, R1=plant.cfg.stemTopR;
+  const rSeg=26, hSeg=30;
+  const geo=new THREE.CylinderGeometry(1,1,1,rSeg,hSeg,true);
+  // reshape into tapered, slightly swollen-base profile of height H
+  const p=geo.attributes.position;
+  for(let i=0;i<p.count;i++){
+    const yy=p.getY(i)+0.5;                 // 0..1 up
+    const y=yy*H;
+    // radius profile
+    let r=lerp(R0,R1, Math.pow(yy,0.82));
+    r*= 1 + 0.10*Math.exp(-yy*7.0);         // basal swelling
+    r*= 1 + 0.012*Math.sin(yy*40.0);        // faint sheath ridging
+    const ang=Math.atan2(p.getZ(i),p.getX(i));
+    p.setX(i, Math.cos(ang)*r);
+    p.setZ(i, Math.sin(ang)*r);
+    p.setY(i, y);
+  }
+  geo.computeVertexNormals();
+  const tex=TEX.stem.clone(); tex.needsUpdate=true;
+  const mat=new THREE.MeshStandardMaterial({map:tex,roughness:0.72,metalness:0.0,
+    color:0xffffff, transparent:true});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.castShadow=true; mesh.receiveShadow=true;
+  plant.root.add(mesh);
+  // a soft corm mound at base
+  const corm=new THREE.Mesh(new THREE.SphereGeometry(R0*1.5,18,12,0,TAU,0,Math.PI*0.5),
+    new THREE.MeshStandardMaterial({color:0x5a4a2c,roughness:1}));
+  corm.scale.y=0.5; corm.castShadow=true; corm.receiveShadow=true; plant.root.add(corm);
+  return {mesh,mat,corm,H};
+}
+
+/* =========================================================================
+   BANANA finger geometry (curved, tapered, ridged)  -> shared, reused
+   ========================================================================= */
+function makeBananaGeometry(){
+  const NL=20, NR=9;
+  const curve=new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(0,0,0),
+    new THREE.Vector3(0.12,0.5,0),
+    new THREE.Vector3(0.30,0.92,0));
+  const geo=new THREE.BufferGeometry();
+  const verts=[], uvs=[], idx=[];
+  const up=new THREE.Vector3(0,0,1);
+  const tan=new THREE.Vector3(), nrm=new THREE.Vector3(), bin=new THREE.Vector3(), pt=new THREE.Vector3();
+  for(let i=0;i<=NL;i++){
+    const t=i/NL;
+    curve.getPoint(t,pt); curve.getTangent(t,tan);
+    nrm.crossVectors(tan,up).normalize();
+    bin.crossVectors(tan,nrm).normalize();
+    // chunky finger: fat middle, blunt base, tapering to a small point at the tip
+    const rad=0.155*Math.pow(Math.sin(Math.PI*Math.min(t*1.06,1)),0.42)*(1-0.10*t) + 0.012*(1-t);
+    for(let j=0;j<=NR;j++){
+      const ang=j/NR*TAU;
+      const lobe=1+0.09*Math.cos(5*ang);
+      const rr=rad*lobe;
+      const vx=pt.x + (nrm.x*Math.cos(ang)+bin.x*Math.sin(ang))*rr;
+      const vy=pt.y + (nrm.y*Math.cos(ang)+bin.y*Math.sin(ang))*rr;
+      const vz=pt.z + (nrm.z*Math.cos(ang)+bin.z*Math.sin(ang))*rr;
+      verts.push(vx,vy,vz);
+      uvs.push(j/NR, t);
+    }
+  }
+  for(let i=0;i<NL;i++){
+    for(let j=0;j<NR;j++){
+      const a=i*(NR+1)+j, b=a+(NR+1);
+      idx.push(a,b,a+1, a+1,b,b+1);
+    }
+  }
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
+  geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  return geo;
+}
+const BANANA_GEO=makeBananaGeometry();
+
+/* =========================================================================
+   INFLORESCENCE — peduncle (arcing tube), bract heart, hands of fingers
+   ========================================================================= */
+class Inflorescence{
+  constructor(plant){
+    this.plant=plant;
+    this.group=new THREE.Group();
+    this.group.rotation.y = plant.infAzim;   // hang out to one chosen side
+    plant.crown.add(this.group);
+
+    this.maxHands=7; this.fingersPerHand=11;
+    this.maxFingers=this.maxHands*this.fingersPerHand;
+
+    // peduncle tube (rebuilt as it grows/bends)
+    this.stalkMat=new THREE.MeshStandardMaterial({color:0x4a5a26,roughness:0.66,transparent:true,envMapIntensity:0.25});
+    this.stalk=new THREE.Mesh(new THREE.BufferGeometry(),this.stalkMat);
+    this.stalk.castShadow=true; this.group.add(this.stalk);
+
+    // fingers (instanced)
+    const fmat=new THREE.MeshStandardMaterial({map:TEX.banana,roughness:0.46,metalness:0.0,
+      vertexColors:false, transparent:true, envMapIntensity:0.35});
+    this.fmat=fmat;
+    this.fingers=new THREE.InstancedMesh(BANANA_GEO,fmat,this.maxFingers);
+    this.fingers.castShadow=true; this.fingers.receiveShadow=true;
+    this.fingers.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(this.maxFingers*3),3);
+    this.fingers.count=this.maxFingers;
+    this.group.add(this.fingers);
+
+    // heart (bract bud) group at stalk tip
+    this.heart=new THREE.Group(); this.group.add(this.heart);
+    this.bracts=[];
+    const bmat=new THREE.MeshStandardMaterial({map:TEX.bract,roughness:0.30,metalness:0.0,
+      side:THREE.DoubleSide,transparent:true, envMapIntensity:0.8});
+    this.bmat=bmat;
+    const bractGeo=this._bractGeo();
+    this.nb=8;
+    for(let i=0;i<this.nb;i++){
+      const m=new THREE.Mesh(bractGeo,bmat);
+      m.castShadow=true;
+      const wrap=new THREE.Group();
+      wrap.add(m);
+      wrap.userData={ layer:i, ang:i*2.3999632, up:i/this.nb };
+      this.heart.add(wrap);
+      this.bracts.push(wrap);
+    }
+    // heart core: a pointed torpedo (lathe), maroon, waxy
+    const prof=[[0.00,0.10],[0.13,0.30],[0.32,0.45],[0.54,0.455],[0.74,0.35],[0.90,0.19],[1.00,0.0]]
+      .map(r=>new THREE.Vector2(r[1], r[0]));
+    const coreGeo=new THREE.LatheGeometry(prof,22);
+    this.core=new THREE.Mesh(coreGeo,
+      new THREE.MeshStandardMaterial({map:TEX.bract,roughness:0.32,transparent:true,envMapIntensity:0.8}));
+    this.core.castShadow=true;
+    this.heart.add(this.core);
+
+    // reusable objects
+    this._m=new THREE.Matrix4(); this._q=new THREE.Quaternion();
+    this._v=new THREE.Vector3(); this._up=new THREE.Vector3(0,1,0);
+    this._axis=new THREE.Vector3(); this._n=new THREE.Vector3(); this._b=new THREE.Vector3();
+    this.group.visible=false;
+  }
+
+  _bractGeo(){
+    // a curved cupped scale, tip at +Y, cupping toward -Z (hugs the bud)
+    const g=new THREE.PlaneGeometry(0.62,1.0,6,14);
+    const p=g.attributes.position;
+    for(let i=0;i<p.count;i++){
+      let x=p.getX(i), y=p.getY(i)+0.5; // y:0..1 (0 base near stalk, 1 pointed tip)
+      const w=Math.pow(Math.sin(Math.PI*Math.min(y*1.03,1)),0.75)*0.5; // taper to point
+      x*= (w/0.31);
+      const cup=-(x*x)*1.7;              // transverse cup
+      const curl=-Math.pow(y,1.7)*0.42;   // curl the tip outward a touch
+      p.setX(i,x); p.setY(i,y); p.setZ(i, cup + curl);
+    }
+    g.computeVertexNormals();
+    return g;
+  }
+
+  // --- stalk path: interpolate an upright spike -> arched, down-hanging bunch ---
+  _path(grow,bend){
+    const S=this.plant.cfg.stalkLen;      // full extent
+    // control points for the fully-hung shape (local: crown origin, +X to one side, -Y hangs down)
+    const hung=[
+      new THREE.Vector3( 0.00, 0.00, 0.0),
+      new THREE.Vector3( 0.45, 0.78, 0.0),   // slight rise off crown
+      new THREE.Vector3( 1.55, 1.02, 0.0),   // shoulder / apex (swings well clear of trunk)
+      new THREE.Vector3( 2.35,-0.15, 0.0),   // turned over, descending
+      new THREE.Vector3( 2.42,-1.55, 0.0),   // hanging out in the open
+      new THREE.Vector3( 2.22,-2.95, 0.0),   // heart tip (bunch bottom)
+    ];
+    const n=hung.length;
+    const pts=[];
+    for(let i=0;i<n;i++){
+      const f=i/(n-1);
+      // upright spike: straight up, length grows with `grow`
+      const up=new THREE.Vector3(0, f*S*0.42*grow, 0);
+      pts.push(up.lerp(hung[i], bend));
+    }
+    return new THREE.CatmullRomCurve3(pts);
+  }
+
+  update(a,health){
+    const A0=0.475, A1=1.0;
+    if(a<A0){ this.group.visible=false; return; }
+    this.group.visible=true;
+
+    // sub-phases
+    const emerge=smoothstep(0.475,0.53,a);          // grow spike upward
+    const bend=smoothstep(0.52,0.605,a);            // arc over to hang
+    const reveal=smoothstep(0.60,0.72,a);           // hands appear
+    const fill=smoothstep(0.70,0.90,a);             // fingers fatten
+    const ripen=smoothstep(0.83,0.99,a);            // green->yellow (stays green longer)
+    const decline=smoothstep(0.93,1.0,a);           // overripe browning
+    const fade=1-smoothstep(0.95,1.0,a);            // whole bunch fades out at the wrap
+
+    const curve=this._path(emerge,bend);
+    this.curve=curve;
+
+    // rebuild the tube only while it is still emerging/bending; freeze it once hung (avoids per-frame GC)
+    if(a<0.64 || !this._tubeBuilt){
+      const tube=new THREE.TubeGeometry(curve, 30, 0.115, 10, false);
+      this.stalk.geometry.dispose(); this.stalk.geometry=tube;
+      this._tubeBuilt=true;
+    }
+    // green peduncle, dulling toward brown-purple as the bunch ripens
+    this.stalkMat.color.setRGB(lerp(0.20,0.28,ripen), lerp(0.30,0.22,ripen), lerp(0.13,0.14,ripen));
+    this.stalkMat.opacity=fade;
+
+    // heart at tip
+    const tip=curve.getPoint(1), tanTip=curve.getTangent(1);
+    this.heart.position.copy(tip);
+    // orient heart to point along tangent (downward when hung)
+    this._q.setFromUnitVectors(this._up, this._v.copy(tanTip).normalize());
+    this.heart.quaternion.copy(this._q);
+    const heartSize=lerp(0.55,1.45,smoothstep(0.475,0.63,a))*(1-decline*0.5);
+    // pointed torpedo core, aligned along +Y (points down the hang)
+    this.core.scale.setScalar(heartSize);
+    this.core.position.set(0,0,0);
+    this.core.material.opacity=fade;
+
+    // overlapping bract scales wrapping the upper ~2/3 of the bud (closed, persistent);
+    // during the reveal window the topmost scales lift a little (hint of opening)
+    this.bmat.opacity=fade;
+    for(const w of this.bracts){
+      const {ang,up}=w.userData;
+      const child=w.children[0];
+      // overlapping scales hugging the upper bud; tips point DOWN toward the exposed point
+      const hy=heartSize*(0.07+up*0.30);
+      const rr=heartSize*(0.30-up*0.11);
+      w.position.set(Math.cos(ang)*rr, hy, Math.sin(ang)*rr);
+      w.rotation.set(0,-ang+Math.PI/2,0);
+      const plen=heartSize*(0.58-up*0.12);
+      child.scale.set(plen,plen*1.15,plen);
+      // hug closed (tip pointing down the bud); a brief opening flourish during reveal,
+      // led by the lowest/outer scales, then the bud closes back to a tight pointed teardrop
+      const liftable = 1-up;                        // upper scales lift first
+      const bump = smoothstep(0.585,0.65,a)*(1-smoothstep(0.70,0.80,a));
+      const openT = liftable*bump;
+      const closedTilt=0.16;                        // hug: tip points down along the bud
+      const openTilt =1.28;                         // peel outward during the flourish
+      child.rotation.x = lerp(closedTilt,openTilt,openT);
+      w.visible = true;
+    }
+
+    // ---- hands of fingers ----
+    const nHands=Math.round(reveal*this.maxHands);
+    const cfg=this.plant.cfg;
+    let fi=0;
+    const ic=this.fingers.instanceColor.array;
+    for(let h=0;h<this.maxHands;h++){
+      const active = h<nHands;
+      // hands stacked in distinct tiers down the hanging rachis, above the heart
+      const sTop=0.55, sBot=0.95;
+      const sPos=lerp(sTop,sBot,this.maxHands<2?0:h/(this.maxHands-1));
+      const pt=curve.getPoint(sPos);
+      const tan=this._axis.copy(curve.getTangent(sPos)).normalize();
+      // frame around stalk axis
+      this._n.crossVectors(tan,this._up);
+      if(this._n.lengthSq()<1e-5) this._n.set(1,0,0);
+      this._n.normalize();
+      this._b.crossVectors(tan,this._n).normalize();
+      const hf=h/(this.maxHands-1);
+      const ringR=lerp(0.46,0.24,hf);
+      // hand ripens top-first
+      const handRipe=clamp(ripen*1.15 - h*0.06,0,1);
+      const fcol = mix3( mix3(COL.fruitGreen,COL.fruitYellow, smoothstep(0.0,0.7,handRipe)),
+                         COL.fruitBrown, smoothstep(0.85,1.1,handRipe) );
+      const fingerLen=lerp(0.28, cfg.fingerLen*lerp(0.72,1.0,1-hf), fill)*(active?1:0);
+      const girth=lerp(0.5,1.18,fill);
+      for(let f=0;f<this.fingersPerHand;f++){
+        const az=f/this.fingersPerHand*TAU + h*0.42;
+        const rd=this._v.set(
+          this._n.x*Math.cos(az)+this._b.x*Math.sin(az),
+          this._n.y*Math.cos(az)+this._b.y*Math.sin(az),
+          this._n.z*Math.cos(az)+this._b.z*Math.sin(az)).normalize();
+        const base=new THREE.Vector3().copy(pt).addScaledVector(rd,ringR);
+        // finger points outward then sweeps up (negative geotropism — the upturned banana)
+        const dir=new THREE.Vector3().copy(rd).multiplyScalar(0.62).add(new THREE.Vector3(0,0.98,0)).normalize();
+        this._q.setFromUnitVectors(this._up,dir);
+        const flv=0.86+hash(h*7+f)*0.28;             // per-finger length variation
+        const L=fingerLen*flv;
+        const scl=new THREE.Vector3(girth*L/0.9, L/0.9, girth*L/0.9);
+        this._m.compose(base,this._q,scl);
+        this.fingers.setMatrixAt(fi,this._m);
+        ic[fi*3]=fcol[0]; ic[fi*3+1]=fcol[1]; ic[fi*3+2]=fcol[2];
+        fi++;
+      }
+    }
+    // zero-out any unused (shouldn't happen: maxFingers used fully)
+    this.fingers.instanceMatrix.needsUpdate=true;
+    this.fingers.instanceColor.needsUpdate=true;
+    this.fmat.opacity=fade;
+  }
+}
+
+/* =========================================================================
+   PUP  — simplified young sucker at the mother's base
+   ========================================================================= */
+class Pup{
+  constructor(plant,ang,dist){
+    this.plant=plant;
+    this.group=new THREE.Group();
+    this.group.position.set(Math.cos(ang)*dist,0,Math.sin(ang)*dist);
+    this.group.rotation.y=hash(ang*13)*TAU;
+    plant.root.add(this.group);
+    // little pseudostem
+    this.stem=new THREE.Mesh(
+      new THREE.CylinderGeometry(0.10,0.16,1,12,1,true),
+      new THREE.MeshStandardMaterial({map:TEX.stem.clone(),roughness:0.7,transparent:true}));
+    this.stem.castShadow=true; this.group.add(this.stem);
+    // a few young furled leaves
+    this.leaves=[];
+    for(let i=0;i<3;i++){
+      const geo=buildLeafGeometry();
+      const mat=new THREE.MeshStandardMaterial({map:TEX.leaf,vertexColors:true,
+        side:THREE.DoubleSide,roughness:0.66,transparent:true,alphaTest:0.42});
+      const mesh=new THREE.Mesh(geo,mat);
+      mesh.castShadow=true;
+      const piv=new THREE.Group(); piv.add(mesh); piv.rotation.y=i*2.4+hash(i)*1;
+      this.group.add(piv);
+      this.leaves.push({mesh,mat,piv,
+        len:1.4+hash(i*3)*0.6, width:0.34, i,
+        azim:piv.rotation.y});
+    }
+  }
+  update(mAge){
+    // emerge in mother's mid-late life, keep growing
+    const g=smoothstep(0.52,0.95,mAge);
+    const vis=g>0.001;
+    this.group.visible=vis;
+    if(!vis) return;
+    const h=lerp(0.15,1.5,g);
+    this.stem.scale.set(lerp(0.4,1,g),h,lerp(0.4,1,g));
+    this.stem.position.y=h*0.5;
+    this.stem.material.opacity=1;
+    for(const lf of this.leaves){
+      lf.piv.position.y=h*0.95;
+      this._deform(lf,g);
+    }
+  }
+  _deform(lf,g){
+    const geo=lf.mesh.geometry;
+    const pos=geo.attributes.position.array, col=geo.attributes.color.array;
+    const {uParam,vParam,rnd}=geo.userData;
+    const matur=smoothstep(0.1,0.9,g);
+    const L=lf.len*(0.3+0.7*matur), Wmax=lf.width*matur;
+    const rollFactor=smoothstep(0.5,0.1,matur), rc=0.08;
+    const ds=L/NU;
+    const th0=1.5-0.25*matur, th1=1.5-(1.6)*matur;
+    const sx=new Float32Array(NUP), sy=new Float32Array(NUP);
+    let x=0,y=0;
+    for(let iu=1;iu<NUP;iu++){ const um=(iu-0.5)/NU; const th=th0+(th1-th0)*smoothstep(0,1,um);
+      x+=Math.cos(th)*ds; y+=Math.sin(th)*ds; sx[iu]=x; sy[iu]=y; }
+    let k=0;
+    for(let iu=0;iu<NUP;iu++){
+      const u=uParam[k];
+      const shape=smoothstep(0.1,0.3,u)*(1-smoothstep(0.72,1,u));
+      let hw=Math.max(Wmax*shape,0.02*L);
+      for(let iv=0;iv<NVP;iv++){
+        const v=vParam[k], latArc=v*hw;
+        const ang=latArc/rc;
+        const lz=lerp(latArc,rc*Math.sin(ang),rollFactor);
+        const lx=lerp(0,rc*(1-Math.cos(ang)),rollFactor);
+        const dy=-0.5*(v*v)*hw;
+        pos[k*3]=sx[iu]+lx; pos[k*3+1]=sy[iu]+dy; pos[k*3+2]=lz;
+        // color: young reddish -> green
+        const youngMix=1-smoothstep(0.1,0.7,matur);
+        let c=mix3(COL.leafGreen, mix3(COL.leafYoung,COL.leafYoung2,0.5), youngMix);
+        const m=(rnd[k]-0.5)*0.06;
+        col[k*3]=clamp(c[0]+m,0,1); col[k*3+1]=clamp(c[1]+m,0,1); col[k*3+2]=clamp(c[2]+m,0,1);
+        k++;
+      }
+    }
+    geo.attributes.position.needsUpdate=true; geo.attributes.color.needsUpdate=true;
+    geo.computeVertexNormals();
+  }
+}
+
+/* =========================================================================
+   PLANT
+   ========================================================================= */
+class Plant{
+  constructor(opts){
+    this.cfg={
+      nLeaves:12, stemHeight:6.2, stemBaseR:0.42, stemTopR:0.26,
+      leafLen:5.6, stalkLen:4.4, fingerLen:1.12,
+      ...opts.cfg
+    };
+    this.seed=opts.seed||0;
+    this.phase=opts.phase||0;
+    this.infAzim=(opts.infAzim!==undefined)?opts.infAzim:(this.seed*TAU+0.6);
+    this.root=new THREE.Group();
+    this.root.position.copy(opts.pos||new THREE.Vector3());
+    this.root.rotation.y=opts.rotY||0;
+    const s=opts.scale||1; this.root.scale.setScalar(s);
+    scene.add(this.root);
+
+    // crown group rides at top of stem
+    this.crown=new THREE.Group();
+    this.root.add(this.crown);
+
+    this.stem=buildStem(this);
+    this.leaves=[]; for(let i=0;i<this.cfg.nLeaves;i++) this.leaves.push(new Leaf(this,i));
+    this.inflor=new Inflorescence(this);
+    this.pups=[ new Pup(this, 0.7+this.seed, 0.9), new Pup(this, 3.4+this.seed, 1.0) ];
+  }
+
+  stemGrow(a){ return lerp(0.05,1.0, smoothstep(0.02,0.46, a)); }
+
+  update(dt){
+    // this plant's own looping age
+    const a = ( (SIM.t/this.cfg.lifespan) + this.phase ) % 1;
+    this.age=a;
+
+    const health = 1 - smoothstep(0.86,0.99,a);   // overall vigor
+    const grow=this.stemGrow(a);
+    const H=this.cfg.stemHeight;
+
+    // die-back: the spent mother sinks & fades into the mat at the very end,
+    // so the wrap to a fresh pup at a=0 is seamless
+    const dieback=smoothstep(0.955,1.0,a);
+    const sink=1-dieback*0.5;
+    const crownH=H*grow*sink;
+
+    // stem scaling (grow up + girth), browning + collapse in decline
+    const decline=smoothstep(0.90,1.0,a);
+    this.stem.mesh.scale.set(lerp(0.35,1,grow), grow*sink, lerp(0.35,1,grow));
+    this.stem.mat.color.setRGB(lerp(1,0.55,decline), lerp(1,0.50,decline), lerp(1,0.44,decline));
+    this.stem.mat.opacity=(1-dieback);
+    this.root.scale.setScalar((this._baseScale||1));
+    this.crown.position.y=crownH;
+    this.crown.rotation.z=decline*0.06*Math.sin(this.seed*10); // gentle lean when old
+
+    for(const lf of this.leaves) lf.update(a,health);
+    this.inflor.update(a,health);
+    for(const pup of this.pups) pup.update(a);
+
+    // whole-plant emergence pop (pup -> plant) handled by scaling small at birth
+    const born=smoothstep(0.0,0.03,a);
+    const birthScale=lerp(0.4,1.0,born);
+    this.crown.scale.setScalar(birthScale);
+  }
+}
+Plant.prototype._baseScale=1;
+
+/* =========================================================================
+   SIM  — staggered trio for a continuous, always-populated lifecycle
+   ========================================================================= */
+const SIM={ t: 6.0, speed:1.0 };   // start a little in so first frame isn't empty
+const LIFESPAN=44;
+
+const plants=[];
+function makePlants(){
+  const layout=[
+    // infAzim chosen so each bunch swings out into open space, toward the viewing hemisphere
+    { pos:new THREE.Vector3(0,0,0),      phase:0.00, seed:0.13, scale:1.00, rotY:0.4,  infAzim:-0.85 },
+    { pos:new THREE.Vector3(5.0,0,1.8),  phase:0.365, seed:0.57, scale:0.95, rotY:2.1,  infAzim: 0.55 },
+    { pos:new THREE.Vector3(-4.6,0,2.6), phase:0.70, seed:0.83, scale:0.92, rotY:-1.3, infAzim:-2.25 },
+  ];
+  for(const L of layout){
+    const p=new Plant({ cfg:{lifespan:LIFESPAN}, seed:L.seed, phase:L.phase,
+      pos:L.pos, rotY:L.rotY, scale:L.scale, infAzim:L.infAzim });
+    p._baseScale=L.scale;
+    plants.push(p);
+  }
+}
+makePlants();
+
+/* =========================================================================
+   Speed dial widget
+   ========================================================================= */
+(function dial(){
+  const el=document.getElementById('dial');
+  const ind=document.getElementById('ind');
+  const fillP=document.getElementById('fill');
+  const trackP=document.getElementById('track');
+  const valEl=document.getElementById('dialVal');
+  const MAXV=4, cx=52,cy=52,R=46, A=135; // arc +-135deg
+  function polar(deg){ const r=(deg-90)*Math.PI/180; return [cx+Math.cos(r)*R, cy+Math.sin(r)*R]; }
+  function arc(a0,a1){ const [x0,y0]=polar(a0),[x1,y1]=polar(a1);
+    const large=(a1-a0)>180?1:0; return `M ${x0} ${y0} A ${R} ${R} 0 ${large} 1 ${x1} ${y1}`; }
+  trackP.setAttribute('d',arc(-A,A));
+  function render(){
+    const f=SIM.speed/MAXV;
+    const ang=-A + f*2*A;
+    fillP.setAttribute('d',arc(-A, ang));
+    ind.setAttribute('transform',`rotate(${ang} ${cx} ${cy})`);
+    valEl.textContent=SIM.speed.toFixed(1)+'×';
+  }
+  let dragging=false, startY=0, startV=1;
+  function setV(v){ SIM.speed=clamp(v,0,MAXV); render(); }
+  el.addEventListener('pointerdown',e=>{ dragging=true; startY=e.clientY; startV=SIM.speed;
+    el.setPointerCapture(e.pointerId); e.preventDefault(); });
+  el.addEventListener('pointermove',e=>{ if(!dragging) return;
+    const dy=startY-e.clientY; setV(startV + dy*0.02); });
+  el.addEventListener('pointerup',()=>dragging=false);
+  el.addEventListener('pointercancel',()=>dragging=false);
+  el.addEventListener('wheel',e=>{ e.preventDefault(); setV(SIM.speed - Math.sign(e.deltaY)*0.1); },{passive:false});
+  render();
+})();
+
+/* =========================================================================
+   Loop
+   ========================================================================= */
+const clock=new THREE.Clock();
+let loadingHidden=false;
+function hideLoading(){ if(loadingHidden) return; loadingHidden=true;
+  const l=document.getElementById('loading'); l.style.opacity='0'; setTimeout(()=>l.remove(),900); }
+
+function animate(){
+  requestAnimationFrame(animate);
+  let dt=clock.getDelta(); if(dt>0.1) dt=0.1;
+  SIM.t += dt*SIM.speed;
+  try{
+    for(const p of plants) p.update(dt);
+  }catch(err){ showErr(err.stack||err.message); }
+  controls.update();
+  // keep sun target near scene center
+  sun.target.position.set(0,4,0);
+  renderer.render(scene,camera);
+  if(!loadingHidden) hideLoading();
+}
+animate();
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+// debug hooks
+window.__SIM=SIM; window.__plants=plants;
+window.__cam=camera; window.__ctrl=controls; window.__scene=scene;
+window.__setT=(t)=>{ SIM.t=t; };
+window.__view=(x,y,z,tx,ty,tz)=>{ controls.autoRotate=false; camera.position.set(x,y,z);
+  controls.target.set(tx||0,ty||3.5,tz||0); controls.update(); };
+</script>
+</body>
+</html>

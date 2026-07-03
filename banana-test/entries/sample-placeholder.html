@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sample placeholder — banana life cycle</title>
+<style>
+    html,body{margin:0;height:100%;background:#12100d;overflow:hidden;}
+    canvas{display:block;width:100%;height:100%;}
+    .tag{
+        position:fixed;left:12px;bottom:10px;color:#f4ede1;opacity:.55;
+        font:12px/1.4 ui-monospace,Menlo,monospace;
+    }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="tag">sample placeholder — not a model entry</div>
+<script>
+// A deliberately simple 2D sketch of the banana life cycle:
+// corm -> leaves -> flower -> fruit -> decay -> pups, on a ~24s loop.
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+function resize(){ cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio; }
+addEventListener('resize', resize); resize();
+
+const LOOP = 24000;
+const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
+// phase progress: 0 before t0, 0->1 between t0 and t1, 1 after
+const ph = (t,t0,t1) => clamp((t - t0) / (t1 - t0), 0, 1);
+const ease = p => p*p*(3-2*p);
+
+function leaf(x, y, len, angle, unfurl, wilt, sway){
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle + sway + wilt * 0.9);
+    const L = len * unfurl;
+    const w = L * 0.22 * (1 - wilt * 0.4);
+    const g = ctx.createLinearGradient(0, 0, L, 0);
+    const green = 100 - wilt * 60, sat = 45 - wilt * 25;
+    g.addColorStop(0, `hsl(${green},${sat}%,${30 - wilt*8}%)`);
+    g.addColorStop(1, `hsl(${green},${sat}%,${42 - wilt*14}%)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(L * 0.45, -w, L, -w * 0.1);
+    ctx.quadraticCurveTo(L * 0.45,  w, 0, 0);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(20,30,10,.5)';
+    ctx.lineWidth = L * 0.015;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(L * 0.5, 0, L, -w * 0.1); ctx.stroke();
+    ctx.restore();
+}
+
+function banana(x, y, r, angle, ripe){
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(angle);
+    ctx.strokeStyle = `hsl(${52 - ripe * 10},${60 + ripe * 20}%,${30 + ripe * 25}%)`;
+    ctx.lineWidth = r * 0.55; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(0, 0, r, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+    ctx.restore();
+}
+
+function plant(cx, base, S, t, isPup){
+    // pups replay the early phases only
+    const grow   = ease(ph(t, 500, 7000));            // trunk + leaves
+    const flower = isPup ? 0 : ease(ph(t, 8000, 11000));
+    const fruit  = isPup ? 0 : ease(ph(t, 11000, 15000));
+    const ripe   = isPup ? 0 : ease(ph(t, 14000, 17000));
+    const wilt   = isPup ? 0 : ease(ph(t, 17000, 21500));
+    const sway = Math.sin(t / 900 + cx) * 0.03 * grow;
+
+    const H = S * grow;
+    if (H < 1) {
+        // the corm
+        ctx.fillStyle = '#6b4a2f';
+        ctx.beginPath(); ctx.ellipse(cx, base, S*0.10, S*0.055, 0, 0, 7); ctx.fill();
+        return;
+    }
+    // pseudostem
+    const lean = sway * H * 0.6 + wilt * H * 0.12;
+    const topX = cx + lean, topY = base - H * (1 - wilt * 0.25);
+    const g = ctx.createLinearGradient(cx, base, topX, topY);
+    g.addColorStop(0, `hsl(${90 - wilt*50},35%,${24 - wilt*6}%)`);
+    g.addColorStop(1, `hsl(${95 - wilt*55},40%,${34 - wilt*12}%)`);
+    ctx.strokeStyle = g; ctx.lineWidth = S * 0.075 * (1 - wilt * 0.3); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, base);
+    ctx.quadraticCurveTo(cx + lean * 0.3, base - H * 0.6, topX, topY); ctx.stroke();
+
+    // leaves fan out from the top, unfurling one by one
+    const N = 6;
+    for (let i = 0; i < N; i++){
+        const side = i % 2 ? 1 : -1;
+        const u = ease(ph(grow, 0.25 + i * 0.12, 0.5 + i * 0.12));
+        if (u <= 0) continue;
+        const a = side * (0.45 + (i / N) * 0.9) - Math.PI / 2 + side * wilt * 0.6;
+        leaf(topX, topY + i * S * 0.01, S * (0.55 - i * 0.04), a, u, wilt, sway * 2);
+    }
+
+    // flower: the purple bell drops down, then the bunch appears above it
+    if (flower > 0){
+        const drop = S * 0.34 * flower + fruit * S * 0.1;
+        const fx = topX + S * 0.1, fy = topY + drop;
+        ctx.strokeStyle = `hsl(90,30%,${26 - wilt*10}%)`; ctx.lineWidth = S * 0.02;
+        ctx.beginPath(); ctx.moveTo(topX, topY); ctx.quadraticCurveTo(fx, topY + drop * 0.4, fx, fy); ctx.stroke();
+        ctx.fillStyle = `hsl(310,45%,${30 - wilt*12}%)`;
+        ctx.save(); ctx.translate(fx, fy); ctx.rotate(0.1);
+        ctx.beginPath(); ctx.ellipse(0, 0, S * 0.05 * flower, S * 0.09 * flower, 0, 0, 7); ctx.fill(); ctx.restore();
+        // hands of bananas along the stalk
+        const hands = Math.floor(fruit * 4);
+        for (let h = 0; h < hands; h++){
+            const hy = topY + drop * (0.3 + h * 0.14);
+            for (let b = -2; b <= 2; b++)
+                banana(fx + b * S * 0.028, hy, S * 0.045, b * 0.15, ripe * (1 - wilt * 0.5));
+        }
+    }
+}
+
+function frame(now){
+    const t = now % LOOP;
+    const W = cv.width, H = cv.height, S = Math.min(W, H) * 0.62;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // sky + soil
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#1a2418'); sky.addColorStop(1, '#12100d');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#241a10'; ctx.fillRect(0, H * 0.86, W, H * 0.14);
+
+    const base = H * 0.87, cx = W * 0.5;
+    // pups emerge near the end and inherit the loop
+    const pup = ease(ph(t, 19000, 23500));
+    if (pup > 0){
+        plant(cx - S * 0.28, base + 4, S * 0.35 * pup, 6800 * pup, true);
+        plant(cx + S * 0.30, base + 6, S * 0.28 * pup, 5200 * pup, true);
+    }
+    plant(cx, base, S, t, false);
+
+    // phase label
+    const phases = [[0,'corm'],[500,'growing'],[8000,'flowering'],[11000,'fruiting'],[17000,'decaying'],[19000,'pups emerge']];
+    let label = 'corm';
+    for (const [t0, name] of phases) if (t >= t0) label = name;
+    ctx.fillStyle = 'rgba(244,237,225,.6)';
+    ctx.font = `${Math.round(S*0.045)}px ui-monospace, Menlo, monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(label, cx, H * 0.08);
+
+    requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

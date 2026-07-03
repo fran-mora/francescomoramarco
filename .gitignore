@@ -1,1 +1,5 @@
 .idea
+.playwright-mcp/
+*.jpeg
+# keep launch strategy private — not for the public site
+banana-test/social-posts*.md

@@ -1,0 +1,1320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cavendish Banana Lifecycle</title>
+  <link rel="icon" href="data:," />
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 72% 16%, rgba(255, 245, 197, 0.62), rgba(255, 245, 197, 0) 25%),
+        linear-gradient(180deg, #9fc6dc 0%, #d6e4df 47%, #c8b58d 100%);
+      color: #102016;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      touch-action: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: grab;
+    }
+
+    canvas:active {
+      cursor: grabbing;
+    }
+
+    #speedDial {
+      position: fixed;
+      right: clamp(14px, 2.6vw, 34px);
+      bottom: clamp(14px, 2.6vw, 34px);
+      width: 76px;
+      height: 76px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.55);
+      background:
+        radial-gradient(circle at 34% 28%, rgba(255,255,255,0.72), rgba(255,255,255,0.16) 34%, rgba(25,41,30,0.55) 100%),
+        conic-gradient(from -135deg, #7fa05e, #d5c95a, #d28a45, #7fa05e);
+      box-shadow:
+        0 18px 42px rgba(16, 23, 19, 0.24),
+        inset 0 1px 10px rgba(255,255,255,0.34),
+        inset 0 -8px 20px rgba(0,0,0,0.28);
+      z-index: 5;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      outline: none;
+    }
+
+    #speedDial:focus-visible {
+      box-shadow:
+        0 0 0 3px rgba(244, 234, 155, 0.7),
+        0 18px 42px rgba(16, 23, 19, 0.24),
+        inset 0 1px 10px rgba(255,255,255,0.34),
+        inset 0 -8px 20px rgba(0,0,0,0.28);
+    }
+
+    #speedDial::before {
+      content: "";
+      position: absolute;
+      inset: 9px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 42% 35%, rgba(255,255,255,0.4), rgba(255,255,255,0.03) 44%, rgba(0,0,0,0.26) 100%);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    #speedNeedle {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 3px;
+      height: 28px;
+      border-radius: 4px;
+      background: linear-gradient(180deg, #fbf8c8, #293720);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+      transform-origin: 50% 88%;
+      transform: translate(-50%, -88%) rotate(0deg);
+    }
+
+    #speedValue {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      min-width: 42px;
+      transform: translate(-50%, -15%);
+      color: #f7f5d1;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.62);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene" aria-label="Three.js animation of a Cavendish banana plant lifecycle"></canvas>
+  <div id="speedDial" role="slider" aria-label="Animation speed" aria-valuemin="0.25" aria-valuemax="2.50" aria-valuenow="1.00" tabindex="0">
+    <div id="speedNeedle"></div>
+    <div id="speedValue">1.0x</div>
+  </div>
+
+  <script type="module">
+  import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+  (() => {
+    "use strict";
+
+    const canvas = document.getElementById("scene");
+    const speedDial = document.getElementById("speedDial");
+    const speedNeedle = document.getElementById("speedNeedle");
+    const speedValue = document.getElementById("speedValue");
+    const TAU = Math.PI * 2;
+    const tmpVec = new THREE.Vector3();
+    const tmpVec2 = new THREE.Vector3();
+    const tmpQuat = new THREE.Quaternion();
+    const upVector = new THREE.Vector3(0, 1, 0);
+    const leafForward = new THREE.Vector3(0, 0, 1);
+    const origin = new THREE.Vector3(0, 0, 0);
+
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const mix = (a, b, t) => a + (b - a) * t;
+    const smoother = t => t * t * t * (t * (t * 6 - 15) + 10);
+    const smoothstep = (a, b, v) => {
+      const t = clamp((v - a) / (b - a), 0, 1);
+      return t * t * (3 - 2 * t);
+    };
+    const easeOutCubic = t => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+    const easeInOut = t => smoother(clamp(t, 0, 1));
+    const seeded = n => {
+      const x = Math.sin(n * 127.1 + 311.7) * 43758.5453123;
+      return x - Math.floor(x);
+    };
+
+    function colorMix(a, b, t) {
+      return a.clone().lerp(b, clamp(t, 0, 1));
+    }
+
+    function makeCanvasTexture(width, height, drawer) {
+      const c = document.createElement("canvas");
+      c.width = width;
+      c.height = height;
+      const ctx = c.getContext("2d");
+      drawer(ctx, width, height);
+      const texture = new THREE.CanvasTexture(c);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.anisotropy = 4;
+      return texture;
+    }
+
+    const textures = {
+      leaf: makeCanvasTexture(512, 1024, (ctx, w, h) => {
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, "#4b8f38");
+        g.addColorStop(0.42, "#2f7d33");
+        g.addColorStop(1, "#1e5d2d");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(224, 237, 150, 0.46)";
+        ctx.fillRect(w * 0.492, 0, w * 0.016, h);
+        for (let i = 0; i < 46; i++) {
+          const y = (i / 46) * h;
+          const alpha = 0.08 + 0.04 * Math.sin(i * 1.7);
+          ctx.strokeStyle = `rgba(238, 245, 174, ${alpha})`;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(w * 0.5, y);
+          ctx.lineTo(w * 0.08, y + 74 + Math.sin(i) * 28);
+          ctx.moveTo(w * 0.5, y);
+          ctx.lineTo(w * 0.92, y + 62 + Math.cos(i) * 22);
+          ctx.stroke();
+        }
+        for (let i = 0; i < 2500; i++) {
+          const x = seeded(i * 2.7) * w;
+          const y = seeded(i * 7.4) * h;
+          const r = 0.4 + seeded(i * 12.1) * 1.6;
+          ctx.fillStyle = `rgba(12, 50, 23, ${0.035 + seeded(i * 5.1) * 0.045})`;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, TAU);
+          ctx.fill();
+        }
+      }),
+      youngLeaf: makeCanvasTexture(512, 1024, (ctx, w, h) => {
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, "#7a3a32");
+        g.addColorStop(0.45, "#3d7032");
+        g.addColorStop(1, "#215d30");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(244, 205, 132, 0.42)";
+        ctx.fillRect(w * 0.49, 0, w * 0.02, h);
+        for (let i = 0; i < 360; i++) {
+          const x = seeded(i * 3.3) * w;
+          const y = seeded(i * 6.9) * h;
+          const rx = 2 + seeded(i * 8.8) * 10;
+          const ry = 2 + seeded(i * 2.8) * 24;
+          ctx.fillStyle = `rgba(50, 23, 30, ${0.14 + seeded(i) * 0.18})`;
+          ctx.beginPath();
+          ctx.ellipse(x, y, rx, ry, seeded(i * 4.1) * Math.PI, 0, TAU);
+          ctx.fill();
+        }
+        for (let i = 0; i < 40; i++) {
+          const y = (i / 40) * h;
+          ctx.strokeStyle = "rgba(237, 231, 147, 0.12)";
+          ctx.beginPath();
+          ctx.moveTo(w * 0.5, y);
+          ctx.lineTo(w * 0.1, y + 80);
+          ctx.moveTo(w * 0.5, y);
+          ctx.lineTo(w * 0.9, y + 78);
+          ctx.stroke();
+        }
+      }),
+      oldLeaf: makeCanvasTexture(512, 1024, (ctx, w, h) => {
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, "#9b9b43");
+        g.addColorStop(0.5, "#786f31");
+        g.addColorStop(1, "#4c4d25");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(218, 201, 92, 0.42)";
+        ctx.fillRect(w * 0.49, 0, w * 0.02, h);
+        for (let i = 0; i < 620; i++) {
+          const x = seeded(i * 2.1) * w;
+          const y = seeded(i * 5.6) * h;
+          const rx = 1 + seeded(i * 1.8) * 9;
+          const ry = 1 + seeded(i * 9.2) * 20;
+          ctx.fillStyle = `rgba(74, 43, 20, ${0.08 + seeded(i * 11.2) * 0.22})`;
+          ctx.beginPath();
+          ctx.ellipse(x, y, rx, ry, seeded(i) * Math.PI, 0, TAU);
+          ctx.fill();
+        }
+      }),
+      stem: makeCanvasTexture(512, 1024, (ctx, w, h) => {
+        const g = ctx.createLinearGradient(0, 0, w, 0);
+        g.addColorStop(0, "#356c39");
+        g.addColorStop(0.2, "#98a54d");
+        g.addColorStop(0.42, "#5e883c");
+        g.addColorStop(0.63, "#d2bf79");
+        g.addColorStop(1, "#4a7235");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        for (let i = 0; i < 28; i++) {
+          const x = (i / 28) * w + seeded(i) * 12;
+          const alpha = 0.16 + seeded(i * 4.1) * 0.14;
+          ctx.fillStyle = `rgba(255, 246, 162, ${alpha})`;
+          ctx.fillRect(x, 0, 8 + seeded(i * 1.8) * 17, h);
+          ctx.fillStyle = `rgba(21, 64, 31, ${alpha * 0.65})`;
+          ctx.fillRect(x + 10, 0, 2 + seeded(i * 3.4) * 4, h);
+        }
+        for (let i = 0; i < 900; i++) {
+          const x = seeded(i * 9.4) * w;
+          const y = seeded(i * 3.2) * h;
+          const r = 0.7 + seeded(i * 5.5) * 3.2;
+          ctx.fillStyle = `rgba(61, 42, 24, ${0.045 + seeded(i * 6.1) * 0.10})`;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, TAU);
+          ctx.fill();
+        }
+      }),
+      banana: makeCanvasTexture(512, 256, (ctx, w, h) => {
+        const g = ctx.createLinearGradient(0, 0, w, 0);
+        g.addColorStop(0, "#d1b848");
+        g.addColorStop(0.38, "#fff06b");
+        g.addColorStop(0.72, "#f2d044");
+        g.addColorStop(1, "#9f8d35");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        for (let i = 0; i < 520; i++) {
+          const x = seeded(i * 2.1) * w;
+          const y = seeded(i * 4.7) * h;
+          const r = 0.8 + seeded(i * 8.3) * 2.8;
+          ctx.fillStyle = `rgba(90, 45, 18, ${0.05 + seeded(i * 6.6) * 0.18})`;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, TAU);
+          ctx.fill();
+        }
+        ctx.strokeStyle = "rgba(111, 92, 27, 0.22)";
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 6; i++) {
+          const y = (i + 1) * h / 7;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.bezierCurveTo(w * 0.26, y - 12, w * 0.68, y + 10, w, y - 2);
+          ctx.stroke();
+        }
+      }),
+      soil: makeCanvasTexture(512, 512, (ctx, w, h) => {
+        ctx.fillStyle = "#5b402c";
+        ctx.fillRect(0, 0, w, h);
+        for (let i = 0; i < 4200; i++) {
+          const x = seeded(i * 2.13) * w;
+          const y = seeded(i * 7.71) * h;
+          const r = 0.5 + seeded(i * 3.17) * 2.8;
+          const tone = Math.floor(55 + seeded(i * 11.2) * 82);
+          ctx.fillStyle = `rgba(${tone + 18}, ${tone * 0.72}, ${tone * 0.44}, ${0.22 + seeded(i) * 0.42})`;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, TAU);
+          ctx.fill();
+        }
+      })
+    };
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.06;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0xd8e2d8, 10, 28);
+
+    const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.05, 80);
+    const cameraState = {
+      radius: 11.6,
+      targetRadius: 11.6,
+      azimuth: -0.62,
+      targetAzimuth: -0.62,
+      polar: 1.13,
+      targetPolar: 1.13,
+      lastInteraction: -100
+    };
+    const cameraTarget = new THREE.Vector3(0.12, 2.95, 0.05);
+
+    function updateCamera(dt) {
+      cameraState.azimuth = mix(cameraState.azimuth, cameraState.targetAzimuth, 1 - Math.pow(0.0007, dt));
+      cameraState.polar = mix(cameraState.polar, cameraState.targetPolar, 1 - Math.pow(0.0007, dt));
+      cameraState.radius = mix(cameraState.radius, cameraState.targetRadius, 1 - Math.pow(0.0007, dt));
+      const sinPolar = Math.sin(cameraState.polar);
+      const aspectBoost = camera.aspect < 0.85 ? Math.min(1.32, 1 + (0.85 - camera.aspect) * 0.75) : 1;
+      const effectiveRadius = cameraState.radius * aspectBoost;
+      camera.position.set(
+        cameraTarget.x + effectiveRadius * sinPolar * Math.sin(cameraState.azimuth),
+        cameraTarget.y + effectiveRadius * Math.cos(cameraState.polar),
+        cameraTarget.z + effectiveRadius * sinPolar * Math.cos(cameraState.azimuth)
+      );
+      camera.lookAt(cameraTarget);
+    }
+
+    scene.add(new THREE.HemisphereLight(0xdff6ff, 0x6b523d, 2.35));
+    const sun = new THREE.DirectionalLight(0xfff1b5, 4.2);
+    sun.position.set(-4.5, 8.8, 5.2);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 24;
+    sun.shadow.camera.left = -8;
+    sun.shadow.camera.right = 8;
+    sun.shadow.camera.top = 8;
+    sun.shadow.camera.bottom = -8;
+    scene.add(sun);
+
+    const rim = new THREE.DirectionalLight(0xb8f1ff, 1.55);
+    rim.position.set(5, 4, -6);
+    scene.add(rim);
+
+    function enableShadows(root, cast = true, receive = false) {
+      root.traverse(obj => {
+        if (obj.isMesh) {
+          obj.castShadow = cast;
+          obj.receiveShadow = receive;
+        }
+      });
+    }
+
+    function setMaterialOpacity(material, opacity) {
+      if (!material) return;
+      material.opacity = clamp(opacity, 0, 1);
+      material.transparent = opacity < 0.995 || material.transparent;
+      material.depthWrite = opacity > 0.42;
+      material.needsUpdate = true;
+    }
+
+    function setVisibleOpacity(root, opacity) {
+      root.visible = opacity > 0.015;
+      root.traverse(obj => {
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach(mat => setMaterialOpacity(mat, opacity));
+          } else {
+            setMaterialOpacity(obj.material, opacity);
+          }
+        }
+      });
+    }
+
+    function createSoil() {
+      const group = new THREE.Group();
+      const groundMat = new THREE.MeshStandardMaterial({
+        color: 0x7a6043,
+        roughness: 0.94,
+        metalness: 0.0,
+        map: textures.soil
+      });
+      textures.soil.repeat.set(5, 5);
+      const ground = new THREE.Mesh(new THREE.CircleGeometry(10.5, 160), groundMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      group.add(ground);
+
+      const moundGeo = new THREE.SphereGeometry(1, 64, 18);
+      const moundMat = new THREE.MeshStandardMaterial({
+        color: 0x6f4d32,
+        roughness: 0.98,
+        map: textures.soil
+      });
+      const mound = new THREE.Mesh(moundGeo, moundMat);
+      mound.scale.set(2.15, 0.26, 1.62);
+      mound.position.y = 0.02;
+      mound.receiveShadow = true;
+      mound.castShadow = true;
+      group.add(mound);
+
+      const rootMat = new THREE.MeshStandardMaterial({ color: 0x4f3826, roughness: 0.9 });
+      for (let i = 0; i < 36; i++) {
+        const a = seeded(i * 4.7) * TAU;
+        const r0 = 0.62 + seeded(i * 3.3) * 0.32;
+        const len = 0.56 + seeded(i * 6.4) * 0.86;
+        const curve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(Math.cos(a) * r0, 0.055, Math.sin(a) * r0),
+          new THREE.Vector3(Math.cos(a + 0.08) * (r0 + len * 0.32), 0.035, Math.sin(a + 0.08) * (r0 + len * 0.32)),
+          new THREE.Vector3(Math.cos(a + 0.18) * (r0 + len), 0.02, Math.sin(a + 0.18) * (r0 + len))
+        ]);
+        const root = new THREE.Mesh(new THREE.TubeGeometry(curve, 8, 0.011 + seeded(i) * 0.012, 5, false), rootMat);
+        root.castShadow = true;
+        group.add(root);
+      }
+
+      const litterMats = [
+        new THREE.MeshStandardMaterial({ color: 0x8b7f32, roughness: 0.96, side: THREE.DoubleSide }),
+        new THREE.MeshStandardMaterial({ color: 0x5f5828, roughness: 0.96, side: THREE.DoubleSide }),
+        new THREE.MeshStandardMaterial({ color: 0x8a5d35, roughness: 0.96, side: THREE.DoubleSide })
+      ];
+      for (let i = 0; i < 24; i++) {
+        const geo = createLeafGeometry(0.34 + seeded(i * 1.7) * 0.35, 0.05 + seeded(i * 4.2) * 0.09, 0.34 + seeded(i * 6.2) * 0.38, 0.88, i + 40);
+        const blade = new THREE.Mesh(geo, litterMats[i % litterMats.length]);
+        const a = seeded(i * 2.7) * TAU;
+        const r = 1.35 + seeded(i * 5.8) * 2.6;
+        blade.position.set(Math.cos(a) * r, 0.045, Math.sin(a) * r);
+        blade.rotation.set(-Math.PI / 2 + (seeded(i) - 0.5) * 0.18, 0, a + (seeded(i * 9.2) - 0.5) * 1.2);
+        blade.scale.x = seeded(i * 3.8) < 0.35 ? -1 : 1;
+        blade.receiveShadow = true;
+        blade.castShadow = true;
+        group.add(blade);
+      }
+      return group;
+    }
+
+    function createLeafGeometry(length, width, droop, damage, seed) {
+      const segL = 36;
+      const segW = 18;
+      const positions = [];
+      const normals = [];
+      const uvs = [];
+      const indices = [];
+      const leftNotches = [];
+      const rightNotches = [];
+      const notchCount = Math.floor(2 + damage * 7);
+      for (let i = 0; i < notchCount; i++) {
+        leftNotches.push({ at: 0.18 + seeded(seed + i * 4.9) * 0.74, depth: damage * (0.08 + seeded(seed + i * 7.7) * 0.26), spread: 0.025 + seeded(seed + i * 2.1) * 0.04 });
+        rightNotches.push({ at: 0.18 + seeded(seed + i * 5.8 + 20) * 0.74, depth: damage * (0.08 + seeded(seed + i * 3.7 + 20) * 0.25), spread: 0.025 + seeded(seed + i * 8.1 + 20) * 0.04 });
+      }
+
+      for (let i = 0; i <= segL; i++) {
+        const v = i / segL;
+        const arch = 0.18 * length * Math.sin(Math.PI * v) * (1 - damage * 0.28);
+        const centralY = arch - droop * v * v + Math.sin(v * Math.PI * 2 + seed) * 0.018 * damage;
+        const baseHalf = width * Math.pow(Math.sin(Math.PI * v), 0.58) * (0.92 - 0.08 * v);
+        let leftFactor = 1;
+        let rightFactor = 1;
+        for (const n of leftNotches) leftFactor -= n.depth * Math.exp(-Math.pow((v - n.at) / n.spread, 2));
+        for (const n of rightNotches) rightFactor -= n.depth * Math.exp(-Math.pow((v - n.at) / n.spread, 2));
+        leftFactor = clamp(leftFactor, 0.38, 1);
+        rightFactor = clamp(rightFactor, 0.38, 1);
+        for (let j = 0; j <= segW; j++) {
+          const s = j / segW;
+          const u = s * 2 - 1;
+          const sideFactor = u < 0 ? leftFactor : rightFactor;
+          const edgeWeight = Math.pow(Math.abs(u), 1.7);
+          const half = baseHalf * mix(1, sideFactor, edgeWeight);
+          const sideCurl = (0.08 + damage * 0.08) * length * Math.sin(Math.PI * v) * u * u;
+          const tearWave = damage * 0.018 * length * Math.sin((v * 18 + seed) + u * 3) * edgeWeight;
+          const x = u * half;
+          const y = centralY + sideCurl + tearWave;
+          const z = v * length;
+          positions.push(x, y, z);
+          uvs.push(s, 1 - v);
+          normals.push(0, 1, 0);
+        }
+      }
+
+      for (let i = 0; i < segL; i++) {
+        for (let j = 0; j < segW; j++) {
+          const a = i * (segW + 1) + j;
+          const b = a + 1;
+          const c = a + segW + 1;
+          const d = c + 1;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    function createLeafBlade(length, width, droop, damage, seed, material) {
+      const group = new THREE.Group();
+      const petioleLength = length * 0.13;
+      const petioleCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, length * 0.018, petioleLength * 0.48),
+        new THREE.Vector3(0, length * 0.01, petioleLength)
+      ]);
+      const petioleMat = new THREE.MeshStandardMaterial({ color: 0x6f923d, roughness: 0.68, metalness: 0.02 });
+      const petiole = new THREE.Mesh(new THREE.TubeGeometry(petioleCurve, 8, width * 0.035, 8, false), petioleMat);
+      group.add(petiole);
+
+      const blade = new THREE.Mesh(createLeafGeometry(length, width, droop, damage, seed), material);
+      blade.position.z = petioleLength;
+      blade.castShadow = true;
+      blade.receiveShadow = true;
+      group.add(blade);
+
+      const points = [];
+      for (let i = 0; i <= 22; i++) {
+        const v = i / 22;
+        points.push(new THREE.Vector3(
+          0,
+          0.18 * length * Math.sin(Math.PI * v) - droop * v * v + 0.012,
+          petioleLength + v * length
+        ));
+      }
+      const midrib = new THREE.Mesh(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 26, Math.max(0.01, width * 0.018), 8, false),
+        new THREE.MeshStandardMaterial({ color: 0xc3cb68, roughness: 0.65 })
+      );
+      midrib.castShadow = true;
+      group.add(midrib);
+      group.userData.blade = blade;
+      group.userData.midrib = midrib;
+      group.userData.petiole = petiole;
+      return group;
+    }
+
+    function createPseudostemGeometry() {
+      const rings = 34;
+      const radial = 28;
+      const positions = [];
+      const normals = [];
+      const uvs = [];
+      const colors = [];
+      const indices = [];
+      const c1 = new THREE.Color(0x567d3b);
+      const c2 = new THREE.Color(0xb4ad5f);
+      const c3 = new THREE.Color(0x274f2d);
+
+      for (let i = 0; i <= rings; i++) {
+        const v = i / rings;
+        const radius = 0.54 - 0.19 * v + 0.075 * Math.sin(Math.PI * v);
+        const centerX = 0.09 * v * v;
+        const centerZ = -0.04 * Math.sin(v * Math.PI * 0.8);
+        for (let j = 0; j <= radial; j++) {
+          const u = j / radial;
+          const a = u * TAU;
+          const rib = 1 + 0.025 * Math.sin(a * 9 + v * 8) + 0.015 * Math.sin(a * 17);
+          const rx = radius * (1.02 + 0.03 * Math.sin(v * 11));
+          const rz = radius * 0.84;
+          positions.push(
+            centerX + Math.cos(a) * rx * rib,
+            v,
+            centerZ + Math.sin(a) * rz * rib
+          );
+          normals.push(Math.cos(a), 0.16, Math.sin(a));
+          uvs.push(u * 1.6, 1 - v);
+          const stripe = 0.5 + 0.5 * Math.sin(a * 7 + v * 3);
+          const c = c1.clone().lerp(c2, stripe * 0.5 + 0.18 * seeded(j * 2.3)).lerp(c3, 0.18 * seeded(i * 5.2 + j));
+          colors.push(c.r, c.g, c.b);
+        }
+      }
+      for (let i = 0; i < rings; i++) {
+        for (let j = 0; j < radial; j++) {
+          const a = i * (radial + 1) + j;
+          const b = a + 1;
+          const c = a + radial + 1;
+          const d = c + 1;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    function createSheathStrip(angle, widthAngle, seed, material) {
+      const rings = 16;
+      const positions = [];
+      const uvs = [];
+      const indices = [];
+      for (let i = 0; i <= rings; i++) {
+        const v = i / rings;
+        const radius = 0.552 - 0.19 * v + 0.075 * Math.sin(Math.PI * v);
+        const centerX = 0.09 * v * v;
+        const centerZ = -0.04 * Math.sin(v * Math.PI * 0.8);
+        const twist = angle + 0.12 * Math.sin(v * Math.PI + seed);
+        for (let j = 0; j <= 1; j++) {
+          const side = j === 0 ? -0.5 : 0.5;
+          const a = twist + side * widthAngle;
+          positions.push(
+            centerX + Math.cos(a) * radius * 1.06,
+            v,
+            centerZ + Math.sin(a) * radius * 0.89
+          );
+          uvs.push(j, 1 - v);
+        }
+      }
+      for (let i = 0; i < rings; i++) {
+        const a = i * 2;
+        indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      return new THREE.Mesh(geo, material);
+    }
+
+    function createPseudostem() {
+      const group = new THREE.Group();
+      const stemMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.78,
+        metalness: 0.02,
+        map: textures.stem,
+        vertexColors: true
+      });
+      const stem = new THREE.Mesh(createPseudostemGeometry(), stemMat);
+      stem.castShadow = true;
+      stem.receiveShadow = true;
+      group.add(stem);
+      const sheathMaterials = [];
+      for (let i = 0; i < 10; i++) {
+        sheathMaterials.push(new THREE.MeshStandardMaterial({
+          color: new THREE.Color().setHSL(0.18 + seeded(i) * 0.08, 0.38 + seeded(i * 2.8) * 0.18, 0.35 + seeded(i * 5.1) * 0.16),
+          roughness: 0.82,
+          metalness: 0.01,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.82
+        }));
+      }
+      for (let i = 0; i < 12; i++) {
+        const strip = createSheathStrip((i / 12) * TAU + seeded(i * 3.2) * 0.28, 0.13 + seeded(i * 7.3) * 0.08, i, sheathMaterials[i % sheathMaterials.length]);
+        strip.castShadow = true;
+        strip.receiveShadow = true;
+        group.add(strip);
+      }
+      group.userData.stemMaterial = stemMat;
+      return group;
+    }
+
+    function createBananaGeometry(length, radius, curve, seed) {
+      const seg = 22;
+      const radial = 10;
+      const positions = [];
+      const normals = [];
+      const uvs = [];
+      const indices = [];
+      for (let i = 0; i <= seg; i++) {
+        const t = i / seg;
+        const taper = Math.pow(Math.sin(Math.PI * t), 0.32);
+        const centerY = curve * Math.sin(Math.PI * t) + 0.12 * length * t;
+        const centerZ = length * t;
+        const centerX = 0.035 * Math.sin(t * Math.PI * 1.2 + seed);
+        for (let j = 0; j <= radial; j++) {
+          const u = j / radial;
+          const a = u * TAU;
+          const facet = 1 + 0.09 * Math.cos(a * 5) + 0.025 * Math.sin(a * 9 + seed);
+          const r = radius * (0.24 + 0.76 * taper) * facet;
+          positions.push(centerX + Math.cos(a) * r, centerY + Math.sin(a) * r * 0.82, centerZ);
+          normals.push(Math.cos(a), Math.sin(a), 0.2);
+          uvs.push(t, u);
+        }
+      }
+      for (let i = 0; i < seg; i++) {
+        for (let j = 0; j < radial; j++) {
+          const a = i * (radial + 1) + j;
+          const b = a + 1;
+          const c = a + radial + 1;
+          const d = c + 1;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    function createBractGeometry(length, width, curl, seed) {
+      const segL = 24;
+      const segW = 12;
+      const positions = [];
+      const uvs = [];
+      const indices = [];
+      for (let i = 0; i <= segL; i++) {
+        const v = i / segL;
+        const half = width * Math.pow(Math.sin(Math.PI * v), 0.7) * (1 - 0.42 * v);
+        for (let j = 0; j <= segW; j++) {
+          const u = j / segW * 2 - 1;
+          const x = u * half;
+          const z = v * length;
+          const y = curl * Math.sin(Math.PI * v) - 0.18 * length * v * v + Math.abs(u) * 0.06 * Math.sin(Math.PI * v);
+          positions.push(x, y, z);
+          uvs.push((u + 1) * 0.5, 1 - v);
+        }
+      }
+      for (let i = 0; i < segL; i++) {
+        for (let j = 0; j < segW; j++) {
+          const a = i * (segW + 1) + j;
+          indices.push(a, a + segW + 1, a + 1, a + 1, a + segW + 1, a + segW + 2);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    function createHeartGeometry() {
+      const pts = [];
+      for (let i = 0; i <= 18; i++) {
+        const t = i / 18;
+        const y = (t - 0.5) * 1.15;
+        const r = 0.18 + 0.26 * Math.sin(Math.PI * t) * (1 - 0.2 * t);
+        pts.push(new THREE.Vector2(r * (1 - 0.8 * Math.pow(t, 6)), y));
+      }
+      return new THREE.LatheGeometry(pts, 36);
+    }
+
+    function createInflorescence() {
+      const group = new THREE.Group();
+      const peduncleMat = new THREE.MeshStandardMaterial({ color: 0x59763a, roughness: 0.72, metalness: 0.02 });
+      const pedunclePath = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, 0.02, 0.02),
+        new THREE.Vector3(0.04, -0.22, 0.24),
+        new THREE.Vector3(0.02, -0.72, 0.55),
+        new THREE.Vector3(-0.06, -1.38, 0.52),
+        new THREE.Vector3(-0.02, -2.2, 0.28)
+      ]);
+      const peduncle = new THREE.Mesh(new THREE.TubeGeometry(pedunclePath, 48, 0.045, 10, false), peduncleMat);
+      group.add(peduncle);
+
+      const fruitMeshes = [];
+      const flowerMeshes = [];
+      const handGroups = [];
+      const fruitGeo = createBananaGeometry(0.92, 0.062, 0.19, 1);
+      const stalkMat = new THREE.MeshStandardMaterial({ color: 0x486126, roughness: 0.78 });
+      const blossomMat = new THREE.MeshStandardMaterial({ color: 0xf1d184, roughness: 0.82, transparent: true, opacity: 1 });
+      for (let h = 0; h < 6; h++) {
+        const hand = new THREE.Group();
+        const y = -0.58 - h * 0.22;
+        const z = 0.54 - h * 0.035;
+        hand.position.set(0.0, y, z);
+        hand.rotation.y = h * 0.96 + 0.25;
+        const count = h < 2 ? 9 : h < 5 ? 8 : 6;
+        for (let j = 0; j < count; j++) {
+          const fan = (j - (count - 1) / 2) * 0.082;
+          const fruitMat = new THREE.MeshStandardMaterial({
+            color: 0x6a9d35,
+            roughness: 0.56,
+            metalness: 0.02,
+            map: textures.banana
+          });
+          const banana = new THREE.Mesh(fruitGeo, fruitMat);
+          banana.position.set(fan, -0.02 * Math.abs(j - (count - 1) / 2), 0.03);
+          banana.rotation.set(-0.18 - h * 0.025, fan * 1.8, fan * 0.48);
+          banana.scale.setScalar(0.84 + seeded(h * 12 + j) * 0.18 - h * 0.035);
+          banana.castShadow = true;
+          banana.receiveShadow = true;
+          hand.add(banana);
+          fruitMeshes.push({ mesh: banana, material: fruitMat, hand: h, index: j });
+
+          const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.022, 0.16, 7), stalkMat);
+          stalk.position.set(fan, -0.03, 0.02);
+          stalk.rotation.x = Math.PI / 2;
+          stalk.castShadow = true;
+          hand.add(stalk);
+
+          const blossom = new THREE.Mesh(new THREE.SphereGeometry(0.026, 8, 6), blossomMat.clone());
+          blossom.position.set(fan + 0.012 * Math.sign(fan || 1), 0.135, 0.66);
+          blossom.scale.set(0.75, 1.25, 0.75);
+          hand.add(blossom);
+          flowerMeshes.push({ mesh: blossom, material: blossom.material, hand: h });
+        }
+        handGroups.push(hand);
+        group.add(hand);
+      }
+
+      const bractMat = new THREE.MeshStandardMaterial({
+        color: 0x6b203e,
+        roughness: 0.7,
+        metalness: 0.02,
+        side: THREE.DoubleSide
+      });
+      const bractDarkMat = new THREE.MeshStandardMaterial({
+        color: 0x351425,
+        roughness: 0.82,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.88
+      });
+      const bracts = [];
+      for (let i = 0; i < 7; i++) {
+        const holder = new THREE.Group();
+        holder.position.set(0, -0.45 - i * 0.23, 0.5 - i * 0.035);
+        holder.rotation.y = i * 0.96 + 0.18;
+        const bract = new THREE.Mesh(createBractGeometry(0.78 - i * 0.035, 0.28 - i * 0.01, 0.10, i), bractMat.clone());
+        bract.position.z = -0.02;
+        bract.castShadow = true;
+        bract.receiveShadow = true;
+        holder.add(bract);
+        const under = new THREE.Mesh(createBractGeometry(0.73 - i * 0.035, 0.255 - i * 0.01, 0.08, i + 8), bractDarkMat.clone());
+        under.position.y = -0.012;
+        under.position.z = -0.015;
+        under.scale.setScalar(0.92);
+        holder.add(under);
+        bracts.push({ holder, bract, material: bract.material, underMaterial: under.material, index: i });
+        group.add(holder);
+      }
+
+      const heartMat = new THREE.MeshStandardMaterial({ color: 0x4b1736, roughness: 0.72, metalness: 0.02 });
+      const heart = new THREE.Mesh(createHeartGeometry(), heartMat);
+      heart.position.set(-0.02, -2.22, 0.27);
+      heart.rotation.z = 0.1;
+      heart.castShadow = true;
+      heart.receiveShadow = true;
+      group.add(heart);
+
+      const maleBracts = [];
+      for (let i = 0; i < 5; i++) {
+        const holder = new THREE.Group();
+        holder.position.set(-0.02, -1.9 - i * 0.115, 0.30);
+        holder.rotation.y = i * TAU / 5 + 0.4;
+        const b = new THREE.Mesh(createBractGeometry(0.48, 0.18, 0.08, i + 70), bractMat.clone());
+        b.rotation.x = 0.4;
+        b.castShadow = true;
+        holder.add(b);
+        maleBracts.push({ holder, material: b.material, index: i });
+        group.add(holder);
+      }
+
+      enableShadows(group, true, true);
+      group.userData = { peduncle, fruitMeshes, flowerMeshes, handGroups, bracts, heart, heartMat, maleBracts, peduncleMat };
+      return group;
+    }
+
+    class PupRig {
+      constructor(seed, options = {}) {
+        this.group = new THREE.Group();
+        this.seed = seed;
+        this.maxHeight = options.maxHeight || 1.45;
+        this.maxRadius = options.maxRadius || 0.22;
+        this.angleBias = options.angleBias || 0;
+        this.stem = createPseudostem();
+        this.group.add(this.stem);
+        this.corm = new THREE.Mesh(
+          new THREE.SphereGeometry(0.26, 28, 12),
+          new THREE.MeshStandardMaterial({ color: 0x70442c, roughness: 0.9 })
+        );
+        this.corm.scale.set(1.2, 0.45, 0.86);
+        this.corm.position.y = 0.08;
+        this.group.add(this.corm);
+        this.leaves = [];
+        const leafMats = [];
+        for (let i = 0; i < 4; i++) {
+          leafMats.push(new THREE.MeshStandardMaterial({
+            color: i === 0 ? 0x7e673f : 0x3f7d30,
+            emissive: i === 0 ? 0x23130c : 0x102b12,
+            emissiveIntensity: 0.09,
+            roughness: 0.58,
+            metalness: 0.01,
+            side: THREE.DoubleSide,
+            map: i === 0 ? textures.youngLeaf : textures.leaf
+          }));
+        }
+        for (let i = 0; i < 4; i++) {
+          const length = 0.42 + i * 0.2 + seeded(seed + i * 3.4) * 0.12;
+          const width = 0.09 + i * 0.035;
+          const leaf = createLeafBlade(length, width, 0.06 + i * 0.035, 0.08, seed + i, leafMats[i]);
+          this.group.add(leaf);
+          this.leaves.push({ group: leaf, material: leafMats[i], birth: i * 0.18, angle: this.angleBias + (i - 1.5) * 0.95 + seeded(seed + i) * 0.4 });
+        }
+        enableShadows(this.group, true, true);
+      }
+
+      update(progress, motherDecline = 0) {
+        const p = clamp(progress, 0, 1);
+        this.group.visible = p > 0.012;
+        const stemP = easeOutCubic(smoothstep(0.03, 0.82, p));
+        const h = mix(0.08, this.maxHeight, stemP);
+        const r = mix(0.07, this.maxRadius, stemP);
+        this.stem.scale.set(r, h, r);
+        this.stem.rotation.z = 0.08 * Math.sin(this.seed + p * 4) * stemP;
+        this.corm.scale.setScalar(mix(0.55, 1, smoothstep(0, 0.18, p)));
+        this.corm.scale.y *= 0.42;
+        this.corm.position.y = 0.06;
+        const crown = new THREE.Vector3(0.04 * h * stemP, h, 0);
+        this.leaves.forEach((leaf, i) => {
+          const g = smoothstep(leaf.birth, leaf.birth + 0.34, p);
+          leaf.group.visible = g > 0.015;
+          leaf.group.position.copy(crown);
+          const open = smoothstep(leaf.birth + 0.08, leaf.birth + 0.45, p);
+          const az = leaf.angle;
+          const elev = mix(1.1, 0.45 - i * 0.15 - motherDecline * 0.12, open);
+          tmpVec.set(Math.sin(az) * Math.cos(elev), Math.sin(elev), Math.cos(az) * Math.cos(elev)).normalize();
+          tmpQuat.setFromUnitVectors(leafForward, tmpVec);
+          leaf.group.quaternion.copy(tmpQuat);
+          leaf.group.scale.set(g * mix(0.16, 1, open), g, g);
+          leaf.group.userData.blade.scale.x = mix(0.12, 1, open);
+          leaf.material.color.copy(i === 0 ? new THREE.Color(0x7c553c).lerp(new THREE.Color(0x407d2c), open) : new THREE.Color(0x3f7d30));
+        });
+      }
+    }
+
+    class BananaPlant {
+      constructor() {
+        this.group = new THREE.Group();
+        this.stem = createPseudostem();
+        this.group.add(this.stem);
+        this.corm = new THREE.Mesh(
+          new THREE.SphereGeometry(0.38, 40, 18),
+          new THREE.MeshStandardMaterial({ color: 0x73482e, roughness: 0.92 })
+        );
+        this.corm.scale.set(1.1, 0.45, 0.92);
+        this.corm.position.y = 0.09;
+        this.group.add(this.corm);
+
+        this.inflorescence = createInflorescence();
+        this.group.add(this.inflorescence);
+
+        this.leaves = [];
+        this.leafSpecs = [
+          { birth: 0.02, angle: 3.5, length: 1.1, width: 0.22, elev: 0.35, droop: 0.22, damage: 0.45 },
+          { birth: 0.07, angle: 1.35, length: 1.35, width: 0.26, elev: 0.42, droop: 0.18, damage: 0.35 },
+          { birth: 0.12, angle: 5.25, length: 1.85, width: 0.34, elev: 0.48, droop: 0.16, damage: 0.24 },
+          { birth: 0.17, angle: 2.45, length: 2.22, width: 0.42, elev: 0.58, droop: 0.14, damage: 0.18 },
+          { birth: 0.22, angle: 4.18, length: 2.62, width: 0.47, elev: 0.54, droop: 0.17, damage: 0.18 },
+          { birth: 0.28, angle: 0.55, length: 3.08, width: 0.55, elev: 0.47, droop: 0.21, damage: 0.2 },
+          { birth: 0.33, angle: 3.18, length: 3.35, width: 0.61, elev: 0.38, droop: 0.27, damage: 0.22 },
+          { birth: 0.38, angle: 5.7, length: 3.18, width: 0.58, elev: 0.64, droop: 0.12, damage: 0.1 },
+          { birth: 0.43, angle: 1.95, length: 3.38, width: 0.63, elev: 0.72, droop: 0.10, damage: 0.08 },
+          { birth: 0.49, angle: 4.92, length: 2.96, width: 0.52, elev: 0.88, droop: 0.06, damage: 0.04 },
+          { birth: 0.55, angle: 0.05, length: 2.35, width: 0.34, elev: 1.03, droop: 0.03, damage: 0.02 }
+        ];
+
+        this.leafSpecs.forEach((spec, i) => {
+          const material = new THREE.MeshStandardMaterial({
+            color: 0x2f7d32,
+            emissive: 0x102b12,
+            emissiveIntensity: 0.1,
+            roughness: 0.55,
+            metalness: 0.01,
+            side: THREE.DoubleSide,
+            map: textures.leaf
+          });
+          const leaf = createLeafBlade(spec.length, spec.width, spec.droop, spec.damage, i + 4, material);
+          this.group.add(leaf);
+          this.leaves.push({ group: leaf, material, spec, index: i });
+        });
+
+        this.pups = [
+          { rig: new PupRig(10, { maxHeight: 1.55, maxRadius: 0.22, angleBias: 0.2 }), position: new THREE.Vector3(0.78, 0.0, 0.42), rotation: -0.75, start: 0.61, end: 0.96, max: 0.78 },
+          { rig: new PupRig(20, { maxHeight: 1.1, maxRadius: 0.18, angleBias: 1.5 }), position: new THREE.Vector3(-0.72, 0.0, 0.36), rotation: 0.6, start: 0.68, end: 0.98, max: 0.55 },
+          { rig: new PupRig(30, { maxHeight: 1.28, maxRadius: 0.19, angleBias: 2.7 }), position: new THREE.Vector3(0.34, 0.0, -0.78), rotation: 1.4, start: 0.74, end: 0.99, max: 0.48 },
+          { rig: new PupRig(42, { maxHeight: 0.88, maxRadius: 0.15, angleBias: -0.4 }), position: new THREE.Vector3(-0.28, 0.0, 0.72), rotation: -2.1, start: 0.84, end: 1.0, max: 0.22 }
+        ];
+        this.pups.forEach(p => {
+          p.rig.group.position.copy(p.position);
+          p.rig.group.rotation.y = p.rotation;
+          this.group.add(p.rig.group);
+        });
+
+        this.nextPup = new PupRig(99, { maxHeight: 0.82, maxRadius: 0.14, angleBias: -0.2 });
+        this.nextPup.group.position.set(0.08, 0, 0.15);
+        this.nextPup.group.rotation.y = -0.2;
+        this.group.add(this.nextPup.group);
+
+        enableShadows(this.group, true, true);
+      }
+
+      update(age, elapsed) {
+        const vegetative = easeOutCubic(smoothstep(0.015, 0.44, age));
+        const fruiting = smoothstep(0.43, 0.55, age);
+        const decline = smoothstep(0.73, 0.98, age);
+        const collapse = smoothstep(0.9, 1.0, age);
+        const stemHeight = mix(0.12, 4.18, vegetative) * mix(1, 0.48, collapse);
+        const stemRadius = mix(0.17, 0.86, vegetative) * mix(1, 0.78, collapse);
+        this.stem.scale.set(stemRadius, stemHeight, stemRadius);
+        this.stem.rotation.z = (-0.045 * fruiting - 0.14 * collapse) + Math.sin(elapsed * 0.18) * 0.008;
+        const stemMaterial = this.stem.userData.stemMaterial;
+        stemMaterial.color.copy(new THREE.Color(0xffffff).lerp(new THREE.Color(0x8a713e), decline * 0.65));
+        setVisibleOpacity(this.stem, mix(1, 0.28, collapse));
+        this.corm.scale.setScalar(mix(0.78, 1.12, smoothstep(0, 0.25, age)));
+        this.corm.scale.y *= 0.42;
+
+        const crown = new THREE.Vector3(0.09 * stemHeight * vegetative, stemHeight + 0.02, -0.035 * stemHeight * vegetative);
+        this.leaves.forEach(({ group, material, spec, index }) => {
+          const growth = smoothstep(spec.birth, spec.birth + 0.16, age);
+          const open = smoothstep(spec.birth + 0.05, spec.birth + 0.25, age);
+          const oldness = smoothstep(0.68 - index * 0.018, 0.98 - index * 0.01, age);
+          const leafCollapse = smoothstep(0.84 - index * 0.012, 1.0, age);
+          group.visible = growth > 0.015 && leafCollapse < 0.98;
+          group.position.copy(crown);
+          const wind = 0.045 * Math.sin(elapsed * (0.65 + index * 0.02) + index * 1.7) * (0.25 + open);
+          const az = spec.angle + wind;
+          const startElev = 1.42;
+          const matureElev = spec.elev - decline * (0.58 + 0.08 * index) - collapse * 0.45;
+          const elev = mix(startElev, matureElev, open);
+          tmpVec.set(Math.sin(az) * Math.cos(elev), Math.sin(elev), Math.cos(az) * Math.cos(elev)).normalize();
+          tmpQuat.setFromUnitVectors(leafForward, tmpVec);
+          const twist = new THREE.Quaternion().setFromAxisAngle(leafForward, (index % 2 ? 1 : -1) * (0.04 + oldness * 0.13));
+          group.quaternion.copy(tmpQuat).multiply(twist);
+          group.scale.setScalar(growth * mix(1, 0.92, leafCollapse));
+          group.userData.blade.scale.x = mix(0.055, 1, open) * mix(1, 0.74, oldness);
+          group.userData.blade.scale.y = mix(0.35, 1, open);
+          const fresh = new THREE.Color(0x4f9b3b);
+          const young = new THREE.Color(0x8b573e);
+          const old = new THREE.Color(0xb7a64b);
+          const brown = new THREE.Color(0x74532f);
+          material.map = open < 0.42 ? textures.youngLeaf : (oldness > 0.38 ? textures.oldLeaf : textures.leaf);
+          material.color.copy(colorMix(colorMix(young, fresh, open), colorMix(old, brown, leafCollapse), oldness));
+          material.emissive.copy(new THREE.Color(0x102b12).lerp(new THREE.Color(0x30230f), oldness));
+          material.emissiveIntensity = mix(0.1, 0.055, oldness);
+          setMaterialOpacity(material, mix(1, 0.18, leafCollapse));
+          group.userData.midrib.material.color.copy(new THREE.Color(0xbfd56b).lerp(new THREE.Color(0x80662d), oldness));
+          setMaterialOpacity(group.userData.midrib.material, mix(1, 0.2, leafCollapse));
+          group.userData.petiole.material.color.copy(new THREE.Color(0x799644).lerp(new THREE.Color(0x7a5b2c), oldness));
+          setMaterialOpacity(group.userData.petiole.material, mix(1, 0.25, leafCollapse));
+        });
+
+        this.updateInflorescence(age, crown, elapsed, decline, collapse);
+
+        this.pups.forEach((p, i) => {
+          const g = smoothstep(p.start, p.end, age) * p.max;
+          p.rig.update(g, decline);
+          p.rig.group.position.copy(p.position);
+          p.rig.group.position.y = 0.015 * Math.sin(elapsed + i);
+          p.rig.group.rotation.y = p.rotation + Math.sin(elapsed * 0.15 + i) * 0.03;
+        });
+        const nextProgress = 0.12 * smoothstep(0.84, 1.0, age);
+        this.nextPup.update(nextProgress, decline);
+        this.nextPup.group.visible = age > 0.82;
+      }
+
+      updateInflorescence(age, crown, elapsed, decline, collapse) {
+        const data = this.inflorescence.userData;
+        const appear = smoothstep(0.435, 0.535, age);
+        const flowerStage = smoothstep(0.53, 0.66, age);
+        const fruitMass = smoothstep(0.57, 0.74, age);
+        const ripe = smoothstep(0.76, 0.91, age);
+        this.inflorescence.position.copy(crown);
+        this.inflorescence.visible = appear > 0.02 && collapse < 0.99;
+        this.inflorescence.scale.setScalar(appear);
+        this.inflorescence.rotation.x = 0.03 + 0.10 * fruitMass + 0.08 * decline;
+        this.inflorescence.rotation.z = -0.05 * fruitMass + Math.sin(elapsed * 0.32) * 0.01;
+        data.peduncleMat.color.copy(new THREE.Color(0x59763a).lerp(new THREE.Color(0x6b552d), decline * 0.65));
+
+        data.handGroups.forEach((hand, h) => {
+          const birth = 0.535 + h * 0.022;
+          const g = smoothstep(birth, birth + 0.12, age);
+          const fill = smoothstep(birth + 0.04, birth + 0.23, age);
+          hand.visible = g > 0.015;
+          hand.scale.setScalar(g * mix(0.72, 1.05, fill));
+          hand.rotation.x = 0.05 + 0.1 * fruitMass + h * 0.012;
+        });
+
+        data.fruitMeshes.forEach(item => {
+          const birth = 0.545 + item.hand * 0.022;
+          const g = smoothstep(birth, birth + 0.16, age);
+          const fill = smoothstep(birth + 0.06, birth + 0.24, age);
+          const lateSpot = smoothstep(0.82, 0.96, age);
+          item.mesh.visible = g > 0.02;
+          const base = 0.42 + 0.58 * fill;
+          item.mesh.scale.setScalar(base * (0.93 + seeded(item.index + item.hand * 3) * 0.13));
+          const green = new THREE.Color(0x5c9331);
+          const pale = new THREE.Color(0xc7bf45);
+          const yellow = new THREE.Color(0xf2d44b);
+          const amber = new THREE.Color(0xd19a35);
+          item.material.color.copy(colorMix(colorMix(green, pale, fruitMass), colorMix(yellow, amber, lateSpot * 0.6), ripe));
+          item.material.roughness = mix(0.62, 0.48, ripe);
+          setMaterialOpacity(item.material, mix(1, 0.85, collapse));
+        });
+
+        data.flowerMeshes.forEach(item => {
+          const fade = smoothstep(0.60 + item.hand * 0.018, 0.72 + item.hand * 0.018, age);
+          const show = smoothstep(0.53 + item.hand * 0.02, 0.61 + item.hand * 0.02, age);
+          item.mesh.visible = show > 0.02 && fade < 0.98;
+          item.mesh.scale.setScalar(show * mix(1, 0.2, fade));
+          setMaterialOpacity(item.material, show * (1 - fade));
+        });
+
+        data.bracts.forEach(item => {
+          const birth = 0.47 + item.index * 0.028;
+          const show = smoothstep(birth, birth + 0.07, age);
+          const open = smoothstep(birth + 0.05, birth + 0.19, age);
+          const wither = smoothstep(0.74 + item.index * 0.012, 0.98, age);
+          item.holder.visible = show > 0.02 && wither < 0.98;
+          item.holder.scale.setScalar(show * mix(1, 0.62, wither));
+          item.holder.rotation.x = mix(-0.25, -1.45, open) + wither * 0.6;
+          item.holder.rotation.z = (item.index % 2 ? 0.12 : -0.08) * open;
+          item.material.color.copy(new THREE.Color(0x6b203e).lerp(new THREE.Color(0x58321f), wither));
+          item.underMaterial.color.copy(new THREE.Color(0x351425).lerp(new THREE.Color(0x2b1e17), wither));
+          setMaterialOpacity(item.material, show * mix(1, 0.32, wither));
+          setMaterialOpacity(item.underMaterial, show * mix(0.88, 0.22, wither));
+        });
+
+        const heartShow = smoothstep(0.61, 0.72, age);
+        data.heart.visible = heartShow > 0.02 && collapse < 0.98;
+        data.heart.scale.setScalar(heartShow * mix(0.72, 1, smoothstep(0.65, 0.76, age)) * mix(1, 0.74, decline));
+        data.heart.rotation.x = 0.08 + 0.15 * decline;
+        data.heartMat.color.copy(new THREE.Color(0x4b1736).lerp(new THREE.Color(0x3f271d), decline));
+        setMaterialOpacity(data.heartMat, heartShow * mix(1, 0.55, collapse));
+        data.maleBracts.forEach(item => {
+          const open = smoothstep(0.65 + item.index * 0.025, 0.8 + item.index * 0.025, age);
+          item.holder.visible = heartShow > 0.02 && open < 0.98;
+          item.holder.scale.setScalar(heartShow * mix(0.55, 1, open));
+          item.holder.rotation.x = -0.2 - open * 1.2 + decline * 0.4;
+          setMaterialOpacity(item.material, heartShow * mix(1, 0.25, open));
+        });
+      }
+    }
+
+    const soil = createSoil();
+    scene.add(soil);
+
+    const plant = new BananaPlant();
+    scene.add(plant.group);
+
+    const oldStump = new THREE.Group();
+    const stumpMat = new THREE.MeshStandardMaterial({ color: 0x6a4d2f, roughness: 0.95, transparent: true, opacity: 0.35 });
+    for (let i = 0; i < 5; i++) {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.11 + i * 0.018, 0.18 + i * 0.02, 0.34 + i * 0.07, 11), stumpMat.clone());
+      c.position.set(-0.38 + i * 0.04, 0.15 + i * 0.02, -0.18 + i * 0.015);
+      c.rotation.set((seeded(i) - 0.5) * 0.22, seeded(i + 12) * TAU, (seeded(i + 3) - 0.5) * 0.25);
+      c.castShadow = true;
+      c.receiveShadow = true;
+      oldStump.add(c);
+    }
+    scene.add(oldStump);
+
+    function resize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    }
+    window.addEventListener("resize", resize, { passive: true });
+
+    let draggingCamera = false;
+    let pointerId = null;
+    let lastX = 0;
+    let lastY = 0;
+    canvas.addEventListener("pointerdown", event => {
+      draggingCamera = true;
+      pointerId = event.pointerId;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      cameraState.lastInteraction = performance.now() / 1000;
+      canvas.setPointerCapture(pointerId);
+    });
+    canvas.addEventListener("pointermove", event => {
+      if (!draggingCamera || event.pointerId !== pointerId) return;
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      cameraState.targetAzimuth -= dx * 0.006;
+      cameraState.targetPolar = clamp(cameraState.targetPolar + dy * 0.0048, 0.46, 1.44);
+      cameraState.lastInteraction = performance.now() / 1000;
+    });
+    function stopCameraDrag(event) {
+      if (event.pointerId !== pointerId) return;
+      draggingCamera = false;
+      pointerId = null;
+    }
+    canvas.addEventListener("pointerup", stopCameraDrag);
+    canvas.addEventListener("pointercancel", stopCameraDrag);
+    canvas.addEventListener("wheel", event => {
+      event.preventDefault();
+      cameraState.targetRadius = clamp(cameraState.targetRadius + event.deltaY * 0.006, 5.3, 13.5);
+      cameraState.lastInteraction = performance.now() / 1000;
+    }, { passive: false });
+
+    let speed = 1;
+    let dialDragging = false;
+    function setSpeedFromUnit(unit) {
+      const u = clamp(unit, 0, 1);
+      speed = mix(0.25, 2.5, u);
+      const angle = mix(-132, 132, u);
+      speedNeedle.style.transform = `translate(-50%, -88%) rotate(${angle}deg)`;
+      speedValue.textContent = `${speed.toFixed(1)}x`;
+      speedDial.setAttribute("aria-valuenow", speed.toFixed(2));
+    }
+    function unitFromSpeed(value) {
+      return clamp((value - 0.25) / (2.5 - 0.25), 0, 1);
+    }
+    setSpeedFromUnit(unitFromSpeed(1));
+    function updateDialFromPointer(event) {
+      const rect = speedDial.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const angle = Math.atan2(event.clientY - cy, event.clientX - cx) + Math.PI / 2;
+      let deg = angle * 180 / Math.PI;
+      if (deg < -180) deg += 360;
+      if (deg > 180) deg -= 360;
+      const unit = clamp((deg + 132) / 264, 0, 1);
+      setSpeedFromUnit(unit);
+    }
+    speedDial.addEventListener("pointerdown", event => {
+      dialDragging = true;
+      speedDial.setPointerCapture(event.pointerId);
+      updateDialFromPointer(event);
+    });
+    speedDial.addEventListener("pointermove", event => {
+      if (dialDragging) updateDialFromPointer(event);
+    });
+    speedDial.addEventListener("pointerup", event => {
+      dialDragging = false;
+      if (speedDial.hasPointerCapture(event.pointerId)) speedDial.releasePointerCapture(event.pointerId);
+    });
+    speedDial.addEventListener("pointercancel", () => {
+      dialDragging = false;
+    });
+    speedDial.addEventListener("keydown", event => {
+      if (event.key === "ArrowUp" || event.key === "ArrowRight") {
+        event.preventDefault();
+        setSpeedFromUnit(unitFromSpeed(speed + 0.15));
+      } else if (event.key === "ArrowDown" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        setSpeedFromUnit(unitFromSpeed(speed - 0.15));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setSpeedFromUnit(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setSpeedFromUnit(1);
+      }
+    });
+
+    let lifecycleTime = 0;
+    let previous = performance.now() / 1000;
+    const cycleSeconds = 48;
+    function animate() {
+      const now = performance.now() / 1000;
+      const dt = Math.min(0.05, now - previous);
+      previous = now;
+      lifecycleTime = (lifecycleTime + dt * speed) % cycleSeconds;
+      const age = lifecycleTime / cycleSeconds;
+      const noRecentDrag = now - cameraState.lastInteraction > 5.5 && !draggingCamera;
+      if (noRecentDrag) cameraState.targetAzimuth += dt * 0.045;
+      plant.update(age, now);
+      const stumpOpacity = 0.28 + 0.5 * smoothstep(0.83, 1, age) + 0.18 * (1 - smoothstep(0.02, 0.16, age));
+      oldStump.visible = stumpOpacity > 0.04;
+      oldStump.traverse(obj => {
+        if (obj.material) setMaterialOpacity(obj.material, stumpOpacity);
+      });
+      updateCamera(dt);
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    window.__bananaLifecycleDebug = {
+      setAge(value) {
+        lifecycleTime = clamp(value, 0, 1) * cycleSeconds;
+        plant.update(lifecycleTime / cycleSeconds, performance.now() / 1000);
+        renderer.render(scene, camera);
+      },
+      setSpeed(value) {
+        setSpeedFromUnit(unitFromSpeed(value));
+      },
+      cameraState,
+      renderer,
+      scene
+    };
+
+    updateCamera(1 / 60);
+    animate();
+  })();
+  </script>
+</body>
+</html>

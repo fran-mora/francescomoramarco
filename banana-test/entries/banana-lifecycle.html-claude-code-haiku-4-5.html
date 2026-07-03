@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banana Plant Lifecycle</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            width: 100%;
+            height: 100vh;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0a0a0a;
+        }
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .ui-panel {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .top-left {
+            top: 20px;
+            left: 20px;
+        }
+        .top-right {
+            top: 20px;
+            right: 20px;
+        }
+        .bottom-left {
+            bottom: 20px;
+            left: 20px;
+        }
+        .stage-label {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #4ade80;
+        }
+        .stage-description {
+            font-size: 12px;
+            color: #999;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }
+        .progress-bar {
+            width: 200px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4ade80, #10b981);
+            width: 0%;
+            transition: width 0.1s ease;
+        }
+        .controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            background: rgba(74, 222, 128, 0.2);
+            border: 1px solid #4ade80;
+            color: #4ade80;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        button:hover {
+            background: rgba(74, 222, 128, 0.3);
+            transform: scale(1.05);
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+        .slider-group {
+            margin-top: 10px;
+        }
+        .slider-label {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 4px;
+            display: block;
+        }
+        input[type="range"] {
+            width: 150px;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #4ade80;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #4ade80;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+        }
+        .info-text {
+            font-size: 11px;
+            color: #666;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="ui-panel top-left">
+        <div class="stage-label" id="stageLabel">Emergence</div>
+        <div class="stage-description" id="stageDescription">Small pup emerging from soil</div>
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div style="font-size: 11px; color: #999;">Cycle Progress</div>
+    </div>
+
+    <div class="ui-panel top-right">
+        <div style="margin-bottom: 15px;">
+            <div class="slider-label">Animation Speed</div>
+            <input type="range" id="speedSlider" min="0.1" max="3" step="0.1" value="1">
+            <div class="info-text" id="speedValue">1.0x</div>
+        </div>
+        <div class="controls">
+            <button onclick="window.plantAnimation.reset()">Reset</button>
+            <button onclick="window.plantAnimation.togglePause()">Pause</button>
+        </div>
+    </div>
+
+    <div class="ui-panel bottom-left">
+        <div style="font-size: 12px; color: #999; line-height: 1.6;">
+            <strong>Cavendish Banana Lifecycle</strong><br>
+            Watch as the plant grows from a pup, develops leaves and flowers, produces fruit, and declines while new pups emerge to continue the cycle.
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // ============================================================================
+        // THREE.JS SCENE SETUP
+        // ============================================================================
+        const canvas = document.getElementById('canvas');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFShadowShadowMap;
+        renderer.setClearColor(0x1a1a2e, 1);
+
+        camera.position.set(3, 2.5, 4);
+        camera.lookAt(0, 0.5, 0);
+
+        // ============================================================================
+        // LIGHTING
+        // ============================================================================
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffdd, 0.8);
+        directionalLight.position.set(5, 8, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        directionalLight.shadow.camera.left = -10;
+        directionalLight.shadow.camera.right = 10;
+        directionalLight.shadow.camera.top = 10;
+        directionalLight.shadow.camera.bottom = -10;
+        directionalLight.shadow.camera.near = 0.1;
+        directionalLight.shadow.camera.far = 20;
+        scene.add(directionalLight);
+
+        const fillLight = new THREE.DirectionalLight(0x88ccff, 0.3);
+        fillLight.position.set(-3, 3, -3);
+        scene.add(fillLight);
+
+        // ============================================================================
+        // SOIL/GROUND
+        // ============================================================================
+        const soilGeom = new THREE.CylinderGeometry(4, 4, 0.3, 64);
+        const soilMat = new THREE.MeshStandardMaterial({
+            color: 0x4a3728,
+            roughness: 0.8,
+            metalness: 0
+        });
+        const soil = new THREE.Mesh(soilGeom, soilMat);
+        soil.receiveShadow = true;
+        soil.position.y = -0.15;
+        soil.castShadow = false;
+        scene.add(soil);
+
+        // Add subtle soil texture
+        const soilSurfaceGeom = new THREE.PlaneGeometry(4, 4, 32, 32);
+        const positionAttribute = soilSurfaceGeom.getAttribute('position');
+        for (let i = 0; i < positionAttribute.count; i++) {
+            const z = positionAttribute.getZ(i);
+            positionAttribute.setZ(i, z + (Math.sin(positionAttribute.getX(i) * 2) * Math.cos(positionAttribute.getY(i) * 2)) * 0.02);
+        }
+        positionAttribute.needsUpdate = true;
+        const soilSurface = new THREE.Mesh(soilSurfaceGeom, soilMat);
+        soilSurface.rotation.x = -Math.PI / 2;
+        soilSurface.position.y = 0.01;
+        soilSurface.receiveShadow = true;
+        scene.add(soilSurface);
+
+        // ============================================================================
+        // PLANT GEOMETRY BUILDERS
+        // ============================================================================
+
+        function createLeaf(length, width, curvature, rotation, positionOffset, ageProgress) {
+            // ageProgress: 0 = young/reddish, 1 = mature/green
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(length * 0.3, length * 0.1, 0),
+                new THREE.Vector3(length * 0.6, length * curvature * 0.5, 0),
+                new THREE.Vector3(length, length * curvature, 0)
+            ]);
+
+            const points = curve.getPoints(20);
+            const geometry = new THREE.BufferGeometry();
+            const vertices = [];
+            const colors = [];
+
+            const half = width / 2;
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                const progress = i / (points.length - 1);
+                const w = width * (1 - progress * 0.3);
+
+                vertices.push(p.x - w * 0.5, p.y, p.z);
+                vertices.push(p.x + w * 0.5, p.y, p.z);
+
+                // Color interpolation: young leaves have reddish tones
+                let r, g, b;
+                if (ageProgress < 0.3) {
+                    // Young leaf: dark reddish-brown
+                    r = 0.5 + ageProgress * 0.3;
+                    g = 0.2 + ageProgress * 0.25;
+                    b = 0.15;
+                } else if (ageProgress < 0.7) {
+                    // Transitioning to green
+                    const t = (ageProgress - 0.3) / 0.4;
+                    r = 0.6 + (0.2 - 0.6) * t;
+                    g = 0.45 + (0.55 - 0.45) * t;
+                    b = 0.15 + (0.2 - 0.15) * t;
+                } else if (ageProgress < 0.95) {
+                    // Mature green
+                    r = 0.2;
+                    g = 0.55;
+                    b = 0.2;
+                } else {
+                    // Old/yellowing
+                    r = 0.6;
+                    g = 0.55;
+                    b = 0.1;
+                }
+
+                colors.push(r, g, b);
+                colors.push(r, g, b);
+            }
+
+            const indices = [];
+            for (let i = 0; i < points.length - 1; i++) {
+                const a = i * 2;
+                const b = a + 1;
+                const c = a + 2;
+                const d = a + 3;
+                indices.push(a, c, b);
+                indices.push(b, c, d);
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+            geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(indices), 1));
+            geometry.computeVertexNormals();
+
+            const material = new THREE.MeshStandardMaterial({
+                vertexColors: true,
+                roughness: 0.4,
+                metalness: 0,
+                side: THREE.DoubleSide
+            });
+
+            const leaf = new THREE.Mesh(geometry, material);
+            leaf.castShadow = true;
+            leaf.receiveShadow = true;
+            leaf.rotation.z = rotation;
+            leaf.position.copy(positionOffset);
+
+            return leaf;
+        }
+
+        function createPseudostem(height, radiusBottom, radiusTop) {
+            const segments = 20;
+            const radialSegments = 12;
+            const geom = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, segments);
+
+            // Add slight bulges and taper variations
+            const posAttr = geom.getAttribute('position');
+            const originalPos = posAttr.array.slice();
+            for (let i = 0; i < posAttr.count; i++) {
+                const y = originalPos[i * 3 + 1];
+                const x = originalPos[i * 3];
+                const z = originalPos[i * 3 + 2];
+                const yNorm = (y / height + height / 2) / height;
+                const bulge = Math.sin(yNorm * Math.PI) * 0.08;
+                const dist = Math.sqrt(x * x + z * z);
+                if (dist > 0.01) {
+                    originalPos[i * 3] = x * (1 + bulge);
+                    originalPos[i * 3 + 2] = z * (1 + bulge);
+                }
+            }
+            posAttr.array.set(originalPos);
+            posAttr.needsUpdate = true;
+            geom.computeVertexNormals();
+
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0x7a8f3d,
+                roughness: 0.7,
+                metalness: 0
+            });
+
+            const stem = new THREE.Mesh(geom, mat);
+            stem.castShadow = true;
+            stem.receiveShadow = true;
+            return stem;
+        }
+
+        function createBanana(length, curve) {
+            const geom = new THREE.LatheGeometry(
+                [
+                    new THREE.Vector2(0.15, 0),
+                    new THREE.Vector2(0.17, 0.05),
+                    new THREE.Vector2(0.18, 0.1),
+                    new THREE.Vector2(0.17, 0.15),
+                    new THREE.Vector2(0.14, 0.2),
+                    new THREE.Vector2(0.12, 0.25),
+                    new THREE.Vector2(0.11, 0.3),
+                    new THREE.Vector2(0.1, length)
+                ],
+                12
+            );
+
+            // Curve the banana
+            const posAttr = geom.getAttribute('position');
+            for (let i = 0; i < posAttr.count; i++) {
+                const y = posAttr.getY(i);
+                const x = posAttr.getX(i);
+                const z = posAttr.getZ(i);
+                const t = y / length;
+                posAttr.setX(i, x + Math.sin(t * Math.PI) * curve * t);
+                posAttr.setZ(i, z + Math.cos(t * Math.PI) * curve * t * 0.3);
+            }
+            posAttr.needsUpdate = true;
+            geom.computeVertexNormals();
+
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0x2a8a2a,
+                roughness: 0.6,
+                metalness: 0.05
+            });
+
+            const banana = new THREE.Mesh(geom, mat);
+            banana.castShadow = true;
+            banana.receiveShadow = true;
+            return banana;
+        }
+
+        function createBananaBunch(progress) {
+            const bunch = new THREE.Group();
+            const handCount = Math.min(3, Math.floor(progress * 4));
+
+            for (let h = 0; h < handCount; h++) {
+                const hand = new THREE.Group();
+                const bananasPerHand = 10 + Math.floor(Math.random() * 5);
+
+                for (let i = 0; i < bananasPerHand; i++) {
+                    const banana = createBanana(0.25, 0.15);
+                    const angle = (i / bananasPerHand) * Math.PI * 2;
+                    banana.position.x = Math.cos(angle) * 0.25;
+                    banana.position.z = Math.sin(angle) * 0.25;
+                    banana.position.y = i * 0.03;
+                    banana.rotation.z = angle;
+                    hand.add(banana);
+                }
+
+                hand.position.y = h * 0.35;
+                hand.scale.set(1 - h * 0.15, 1 - h * 0.1, 1 - h * 0.15);
+                bunch.add(hand);
+            }
+
+            return bunch;
+        }
+
+        function createInflorescence(progress) {
+            const inflo = new THREE.Group();
+            const bracts = Math.floor(progress * 8);
+
+            for (let i = 0; i < bracts; i++) {
+                const bractGeom = new THREE.ConeGeometry(0.15 - i * 0.02, 0.3, 8);
+                const bractMat = new THREE.MeshStandardMaterial({
+                    color: 0x8b1a1a,
+                    roughness: 0.5,
+                    metalness: 0
+                });
+                const bract = new THREE.Mesh(bractGeom, bractMat);
+                bract.castShadow = true;
+                bract.receiveShadow = true;
+                bract.position.y = -i * 0.25;
+                bract.rotation.x = Math.random() * 0.3 - 0.15;
+                bract.rotation.z = Math.random() * 0.3 - 0.15;
+                inflo.add(bract);
+            }
+
+            return inflo;
+        }
+
+        function createPup(scale = 0.3) {
+            const pup = new THREE.Group();
+            const stem = createPseudostem(0.2 * scale, 0.08 * scale, 0.06 * scale);
+            pup.add(stem);
+
+            for (let i = 0; i < 2; i++) {
+                const leaf = createLeaf(0.3 * scale, 0.12 * scale, 0.3, Math.PI / 3 + i * Math.PI / 2,
+                    new THREE.Vector3(0, 0.1 * scale, 0), 0.2);
+                pup.add(leaf);
+            }
+
+            return pup;
+        }
+
+        // ============================================================================
+        // PLANT LIFECYCLE MANAGER
+        // ============================================================================
+
+        class BananaPlant {
+            constructor() {
+                this.group = new THREE.Group();
+                this.lifecycle = 0; // 0 to 1
+                this.parts = {
+                    stem: null,
+                    leaves: [],
+                    bunch: null,
+                    inflorescence: null,
+                    pups: []
+                };
+                this.leafAges = [];
+                scene.add(this.group);
+            }
+
+            update(progress) {
+                this.lifecycle = progress;
+                this.group.clear();
+                this.parts.leaves = [];
+                this.parts.pups = [];
+
+                // ========== STAGE 1: EMERGENCE (0-0.1) ==========
+                if (progress < 0.1) {
+                    const emergenceProgress = progress / 0.1;
+                    const scale = emergenceProgress * 0.4;
+                    const pup = createPup(scale);
+                    pup.position.y = (emergenceProgress - 1) * 0.1;
+                    this.group.add(pup);
+                    return;
+                }
+
+                // ========== STAGE 2: VEGETATIVE GROWTH (0.1-0.45) ==========
+                if (progress < 0.45) {
+                    const vegProgress = (progress - 0.1) / 0.35;
+                    const stemHeight = 0.5 + vegProgress * 1.8;
+                    const leafCount = Math.floor(vegProgress * 12) + 2;
+
+                    const stem = createPseudostem(stemHeight, 0.15, 0.12);
+                    stem.position.y = stemHeight / 2;
+                    this.group.add(stem);
+                    this.parts.stem = stem;
+
+                    for (let i = 0; i < leafCount; i++) {
+                        const ageProgress = i / Math.max(leafCount - 1, 1);
+                        const leafLength = 0.4 + vegProgress * 0.8;
+                        const leafWidth = 0.25 + vegProgress * 0.3;
+                        const angle = (i / leafCount) * Math.PI * 2;
+                        const rotation = angle + Math.sin(vegProgress * Math.PI) * 0.3;
+                        const offset = new THREE.Vector3(
+                            Math.cos(angle) * 0.05,
+                            0.4 + (i / leafCount) * stemHeight * 0.8,
+                            Math.sin(angle) * 0.05
+                        );
+
+                        const leaf = createLeaf(leafLength, leafWidth, 0.4, rotation, offset, ageProgress * 0.4);
+                        this.group.add(leaf);
+                        this.parts.leaves.push(leaf);
+                    }
+                    return;
+                }
+
+                // ========== STAGE 3: FLOWERING (0.45-0.55) ==========
+                if (progress < 0.55) {
+                    const flowerProgress = (progress - 0.45) / 0.1;
+                    const stemHeight = 2.3;
+                    const leafCount = 14;
+
+                    const stem = createPseudostem(stemHeight, 0.15, 0.12);
+                    stem.position.y = stemHeight / 2;
+                    this.group.add(stem);
+
+                    for (let i = 0; i < leafCount; i++) {
+                        const ageProgress = Math.min(1, (i / leafCount) * 1.2);
+                        const leafLength = 1.2;
+                        const leafWidth = 0.55;
+                        const curvature = 0.4 + flowerProgress * 0.2;
+                        const angle = (i / leafCount) * Math.PI * 2;
+                        const yaw = Math.sin(i * 0.5) * 0.15;
+                        const leafRotation = angle + yaw;
+                        const leafPos = new THREE.Vector3(
+                            Math.cos(angle) * (0.1 + flowerProgress * 0.05),
+                            0.4 + (i / leafCount) * stemHeight * 0.9,
+                            Math.sin(angle) * (0.1 + flowerProgress * 0.05)
+                        );
+
+                        const leaf = createLeaf(leafLength, leafWidth, curvature, leafRotation, leafPos, ageProgress);
+                        this.group.add(leaf);
+                        this.parts.leaves.push(leaf);
+                    }
+
+                    const inflo = createInflorescence(flowerProgress);
+                    inflo.position.set(0, stemHeight + 0.2, 0);
+                    inflo.rotation.x = Math.PI * 0.15;
+                    this.group.add(inflo);
+                    this.parts.inflorescence = inflo;
+                    return;
+                }
+
+                // ========== STAGE 4: FRUIT DEVELOPMENT (0.55-0.75) ==========
+                if (progress < 0.75) {
+                    const fruitProgress = (progress - 0.55) / 0.2;
+                    const stemHeight = 2.3;
+                    const leafCount = 14;
+
+                    const stem = createPseudostem(stemHeight, 0.15, 0.11);
+                    stem.position.y = stemHeight / 2;
+                    this.group.add(stem);
+
+                    for (let i = 0; i < leafCount; i++) {
+                        const ageProgress = Math.min(1, (i / leafCount) * 1.2);
+                        const leafLength = 1.2;
+                        const leafWidth = 0.55;
+                        const curvature = 0.6;
+                        const angle = (i / leafCount) * Math.PI * 2;
+                        const yaw = Math.sin(i * 0.5) * 0.15;
+                        const leafRotation = angle + yaw;
+                        const leafPos = new THREE.Vector3(
+                            Math.cos(angle) * 0.15,
+                            0.4 + (i / leafCount) * stemHeight * 0.85,
+                            Math.sin(angle) * 0.15
+                        );
+
+                        const leaf = createLeaf(leafLength, leafWidth, curvature, leafRotation, leafPos, ageProgress * 0.8);
+                        this.group.add(leaf);
+                        this.parts.leaves.push(leaf);
+                    }
+
+                    const bunch = createBananaBunch(fruitProgress);
+                    bunch.position.set(0, stemHeight + 0.1, 0);
+                    bunch.rotation.x = Math.PI * 0.2;
+                    this.group.add(bunch);
+                    this.parts.bunch = bunch;
+                    return;
+                }
+
+                // ========== STAGE 5: RIPENING (0.75-0.90) ==========
+                if (progress < 0.90) {
+                    const ripProgress = (progress - 0.75) / 0.15;
+                    const stemHeight = 2.3;
+                    const leafCount = 14;
+
+                    const stem = createPseudostem(stemHeight, 0.15, 0.10);
+                    stem.position.y = stemHeight / 2;
+                    this.group.add(stem);
+
+                    for (let i = 0; i < leafCount; i++) {
+                        const ageProgress = Math.min(1, (i / leafCount) * 1.2);
+                        const leafLength = 1.2;
+                        const leafWidth = 0.55;
+                        const curvature = 0.7;
+                        const angle = (i / leafCount) * Math.PI * 2;
+                        const yaw = Math.sin(i * 0.5) * 0.15;
+                        const leafRotation = angle + yaw;
+                        const droopAmount = ripProgress * 0.2;
+                        const leafPos = new THREE.Vector3(
+                            Math.cos(angle) * 0.15,
+                            0.4 + (i / leafCount) * stemHeight * (0.85 - droopAmount),
+                            Math.sin(angle) * 0.15
+                        );
+
+                        const leaf = createLeaf(leafLength, leafWidth, curvature, leafRotation, leafPos,
+                            Math.min(1, ageProgress * (0.8 + ripProgress * 0.2)));
+                        this.group.add(leaf);
+                        this.parts.leaves.push(leaf);
+                    }
+
+                    const bunch = createBananaBunch(1);
+                    bunch.position.set(0, stemHeight + 0.1, 0);
+                    bunch.rotation.x = Math.PI * (0.2 + ripProgress * 0.3);
+
+                    // Change banana color from green to yellow
+                    bunch.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            const r = 0.2 + ripProgress * 0.6;
+                            const g = 0.55 + ripProgress * 0.35;
+                            const b = 0.2 - ripProgress * 0.15;
+                            child.material.color.setRGB(r, g, b);
+                        }
+                    });
+
+                    this.group.add(bunch);
+                    this.parts.bunch = bunch;
+                    return;
+                }
+
+                // ========== STAGE 6: DECLINE (0.90-1.0) ==========
+                const declineProgress = (progress - 0.90) / 0.1;
+                const stemHeight = 2.3;
+                const leafCount = 14;
+
+                const stem = createPseudostem(stemHeight * (1 - declineProgress * 0.15), 0.15 * (1 - declineProgress * 0.2), 0.10);
+                stem.position.y = stemHeight * (1 - declineProgress * 0.15) / 2;
+                this.group.add(stem);
+
+                for (let i = 0; i < leafCount; i++) {
+                    const ageProgress = Math.min(1, (i / leafCount) * 1.2);
+                    const leafLength = 1.2 * (1 - declineProgress * 0.3);
+                    const leafWidth = 0.55 * (1 - declineProgress * 0.4);
+                    const curvature = 0.7;
+                    const angle = (i / leafCount) * Math.PI * 2;
+                    const yaw = Math.sin(i * 0.5) * 0.15;
+                    const leafRotation = angle + yaw + declineProgress * 0.5;
+                    const droopAmount = 0.2 + declineProgress * 0.5;
+                    const leafPos = new THREE.Vector3(
+                        Math.cos(angle) * 0.15 * (1 - declineProgress * 0.3),
+                        0.4 + (i / leafCount) * stemHeight * (0.85 - droopAmount),
+                        Math.sin(angle) * 0.15 * (1 - declineProgress * 0.3)
+                    );
+
+                    const leaf = createLeaf(leafLength, leafWidth, curvature, leafRotation, leafPos,
+                        Math.min(1, ageProgress * (1 + declineProgress * 0.2)));
+                    this.group.add(leaf);
+                    this.parts.leaves.push(leaf);
+                }
+
+                // Show some pups emerging
+                const pupCount = Math.floor(declineProgress * 3);
+                for (let i = 0; i < pupCount; i++) {
+                    const pup = createPup(0.15 + Math.random() * 0.1);
+                    const angle = (i / Math.max(pupCount, 1)) * Math.PI * 2 + Math.random() * 0.3;
+                    pup.position.x = Math.cos(angle) * (0.3 + Math.random() * 0.2);
+                    pup.position.z = Math.sin(angle) * (0.3 + Math.random() * 0.2);
+                    pup.position.y = -0.05 - Math.random() * 0.05;
+                    pup.scale.set(declineProgress * (0.5 + Math.random() * 0.3),
+                        declineProgress * (0.5 + Math.random() * 0.3),
+                        declineProgress * (0.5 + Math.random() * 0.3));
+                    this.group.add(pup);
+                    this.parts.pups.push(pup);
+                }
+            }
+
+            reset() {
+                this.group.clear();
+                this.parts = {
+                    stem: null,
+                    leaves: [],
+                    bunch: null,
+                    inflorescence: null,
+                    pups: []
+                };
+                this.lifecycle = 0;
+            }
+        }
+
+        // ============================================================================
+        // ANIMATION CONTROLLER
+        // ============================================================================
+
+        const stageDescriptions = [
+            { label: 'Emergence', description: 'Small pup emerging from soil' },
+            { label: 'Vegetative Growth', description: 'Pseudostem develops, leaves unfurl' },
+            { label: 'Flowering', description: 'Inflorescence forms with purple bracts' },
+            { label: 'Fruit Development', description: 'Bananas form from female flowers' },
+            { label: 'Ripening', description: 'Bananas mature and change color' },
+            { label: 'Decline', description: 'Mother plant declines, pups emerge' }
+        ];
+
+        const plantAnimation = {
+            plant: new BananaPlant(),
+            cycleProgress: 0,
+            isPaused: false,
+            speed: 1.0,
+            cycleDuration: 30000, // milliseconds
+
+            start() {
+                this.lastTime = Date.now();
+                this.animate();
+            },
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+
+                if (!this.isPaused) {
+                    const now = Date.now();
+                    const elapsed = now - this.lastTime;
+                    this.lastTime = now;
+
+                    this.cycleProgress += (elapsed / this.cycleDuration) * this.speed;
+                    if (this.cycleProgress >= 1) {
+                        this.cycleProgress = 0;
+                    }
+                }
+
+                this.plant.update(this.cycleProgress);
+
+                // Update UI
+                const stageIndex = Math.floor(this.cycleProgress * stageDescriptions.length);
+                const stage = stageDescriptions[Math.min(stageIndex, stageDescriptions.length - 1)];
+                document.getElementById('stageLabel').textContent = stage.label;
+                document.getElementById('stageDescription').textContent = stage.description;
+                document.getElementById('progressFill').style.width = (this.cycleProgress * 100) + '%';
+
+                // Rotate camera around the plant
+                const radius = 4 + Math.sin(this.cycleProgress * Math.PI * 2) * 0.5;
+                const angle = this.cycleProgress * Math.PI * 2;
+                camera.position.x = Math.cos(angle) * radius;
+                camera.position.z = Math.sin(angle) * radius;
+                camera.position.y = 1.5 + Math.sin(this.cycleProgress * Math.PI) * 0.5;
+                camera.lookAt(0, Math.sin(this.cycleProgress * Math.PI) * 0.5, 0);
+
+                renderer.render(scene, camera);
+            },
+
+            reset() {
+                this.cycleProgress = 0;
+                this.lastTime = Date.now();
+                this.plant.reset();
+            },
+
+            togglePause() {
+                this.isPaused = !this.isPaused;
+                this.lastTime = Date.now();
+                const btn = event.target;
+                btn.textContent = this.isPaused ? 'Resume' : 'Pause';
+            }
+        };
+
+        // ============================================================================
+        // EVENT LISTENERS
+        // ============================================================================
+
+        window.plantAnimation = plantAnimation;
+
+        document.getElementById('speedSlider').addEventListener('input', (e) => {
+            plantAnimation.speed = parseFloat(e.target.value);
+            document.getElementById('speedValue').textContent = plantAnimation.speed.toFixed(1) + 'x';
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start animation
+        plantAnimation.start();
+    </script>
+</body>
+</html>
