@@ -92,7 +92,8 @@
             width:min(1840px, 100%);margin:0 auto;padding:0 24px;
         }
         section.board{margin:38px 0 30px;border-top:1px solid var(--line);padding-top:28px;}
-        .board-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;margin-bottom:20px;}
+        /* same centered max-width as #entries so the header aligns with the boxes */
+        .board-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;margin:0 auto 20px;max-width:1500px;}
         .board .eyebrow{font-family:'Fraunces',serif;font-style:italic;font-size:1.3rem;}
         .board .hint{font-size:.92rem;color:var(--muted);}
         #entries{
@@ -175,7 +176,9 @@
             One prompt, several AI coding agents. Each agent gets the same system prompt and must
             write a single <b>three.js</b> page animating the full life of a banana plant —
             <b>corm → leaves → flower → fruit → decay → pups</b>.
-            One shot, no hand-holding. All entries run live below, side by side.
+            One shot, no hand-holding. It leans on two things at once —
+            <b>writing code</b> and <b>visual, spatial reasoning</b> — which is what makes it interesting.
+            All entries run live below, side by side.
         </p>
     </header>
 
@@ -194,13 +197,6 @@ Technical requirements:
 * The user can drag to change camera angle
 * The only visible widget is a speed dial</pre>
     </details>
-    <p class="rules">
-        Rules: one shot per agent, output must be a single self-contained HTML file.
-        The agent's code is never edited; tiles only get a small display-only style patch
-        to shrink each agent's own on-screen widgets so the plants stay visible.
-        "open ↗" shows the untouched original. Every tile is live —
-        if your machine struggles, close the tab and open them one at a time.
-    </p>
 
 </div>
 
@@ -208,7 +204,7 @@ Technical requirements:
     <section class="board">
         <div class="board-head">
             <p class="eyebrow">The agents —</p>
-            <p class="hint">Each one is a coding agent given the same prompt once, with tools but no human in the loop — the Claude models running in Claude Code, GPT-5.5 in Codex. All run live.</p>
+            <p class="hint">Each one is a coding agent given the same prompt once, with tools but no human in the loop — the Claude models running in Claude Code, GPT-5.5 in Codex.</p>
         </div>
         <div id="entries"></div>
     </section>
