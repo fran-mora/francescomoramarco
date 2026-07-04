@@ -3,3 +3,13 @@
 *.jpeg
 # keep launch strategy private — not for the public site
 banana-test/social-posts*.md
+
+# temp side-by-side video capture stages (not part of the site)
+banana-test/_video_*.html
+
+# promo video for the social launch (not part of the static site)
+banana-test/banana-grow-sidebyside.mp4
+banana-test/banana-lifecycle-sidebyside.mp4
+
+# per-agent preview clips (not part of the static site)
+banana-test/videos/
