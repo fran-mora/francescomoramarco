@@ -111,6 +111,9 @@
         }
         @media (max-width:760px){
             #entries{grid-template-columns:1fr;}
+            /* refusal / text tiles: let them grow tall and wrap, not clip */
+            .card.text .viewer{aspect-ratio:auto;min-height:200px;}
+            .text-panel{font-size:.92rem;line-height:1.5;padding:18px 16px;max-width:100%;}
         }
 
         .card{
@@ -135,7 +138,7 @@
         .text-panel{
             color:#F4EDE1;font-family:'Fraunces',serif;font-weight:300;
             font-size:1.05rem;line-height:1.6;text-align:center;
-            max-width:44ch;padding:24px 28px;white-space:pre-wrap;
+            max-width:44ch;padding:24px 28px;white-space:pre-wrap;overflow-wrap:anywhere;
             max-height:100%;overflow:auto;
         }
         .card-bar{
@@ -285,23 +288,30 @@ Technical requirements:
                 // entries are our own curated static files
                 iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
                 iframe.title = e.model + ' — banana test entry';
-                if (e.tileCss || e.tileJs) {
-                    iframe.addEventListener('load', () => {
-                        try {
-                            const doc = iframe.contentDocument;
-                            if (e.tileCss) {
-                                const style = doc.createElement('style');
-                                style.textContent = e.tileCss;
-                                (doc.head || doc.documentElement).appendChild(style);
-                            }
-                            if (e.tileJs) {
-                                const script = doc.createElement('script');
-                                script.textContent = e.tileJs;
-                                (doc.body || doc.documentElement).appendChild(script);
-                            }
-                        } catch (err) { /* cross-origin or not loaded — leave as-is */ }
-                    });
-                }
+                iframe.addEventListener('load', () => {
+                    try {
+                        const doc = iframe.contentDocument;
+                        if (e.tileCss) {
+                            const style = doc.createElement('style');
+                            style.textContent = e.tileCss;
+                            (doc.head || doc.documentElement).appendChild(style);
+                        }
+                        if (e.tileJs) {
+                            const script = doc.createElement('script');
+                            script.textContent = e.tileJs;
+                            (doc.body || doc.documentElement).appendChild(script);
+                        }
+                        // On phones the in-scene control widgets cover the whole tile
+                        // and hide the plant, so drop them here (display-only — the live
+                        // page via "open ↗" keeps them). The parent decides, because
+                        // every tile iframe is narrow even on desktop.
+                        if (window.matchMedia('(max-width: 760px)').matches) {
+                            const m = doc.createElement('style');
+                            m.textContent = '#dial,#speedDial,#speed-dial,.ui-panel,.panel{display:none!important}';
+                            (doc.head || doc.documentElement).appendChild(m);
+                        }
+                    } catch (err) { /* cross-origin or not loaded — leave as-is */ }
+                });
                 viewer.appendChild(iframe);
             }
             card.querySelector('.restart').addEventListener('click', load);
